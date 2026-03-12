@@ -1,0 +1,30 @@
+{
+  "description": "Resource Sharing Forms Processor Configuration",
+  "alma_settings": {
+    "environment": "SANDBOX",
+    "owner": "AM1",
+    "format_type": "DIGITAL"
+  },
+  "file_processing": {
+    "input_folder": "./input",
+    "processed_folder": "./processed",
+    "output_dir": "./output"
+  },
+  "watch_mode": {
+    "poll_interval": 60
+  },
+  "processing_options": {
+    "skip_invalid_identifiers": true,
+    "continue_on_metadata_failure": true,
+    "continue_on_api_error": true
+  },
+  "notes": [
+    "environment: SANDBOX or PRODUCTION",
+    "owner: Resource sharing library code (must be valid in Alma)",
+    "format_type: DIGITAL or PHYSICAL (default: DIGITAL)",
+    "input_folder: Path to SharePoint sync folder with form submissions",
+    "processed_folder: Where completed files are moved",
+    "output_dir: Where logs and reports are saved",
+    "poll_interval: Seconds between checks in watch mode (default: 60)"
+  ]
+}

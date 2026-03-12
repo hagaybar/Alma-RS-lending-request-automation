@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Secrets and production configs
+.env
+*.env
+config/*_prod*.json
+config/*_sandbox*.json
+config/test_config.json
+
+# Data files (user data, never commit)
+input/*.tsv
+processed/*.tsv
+
+# Output (logs and reports, never commit)
+output/logs/*.log
+output/reports/*.csv
+*.log
+
+# Keep directory structure
+!input/.gitkeep
+!processed/.gitkeep
+!output/.gitkeep
+!output/logs/.gitkeep
+!output/reports/.gitkeep
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
