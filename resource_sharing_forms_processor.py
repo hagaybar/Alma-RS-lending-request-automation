@@ -42,6 +42,7 @@ import csv
 import json
 import logging
 import logging.handlers
+import os
 import re
 import signal
 import sys
@@ -90,16 +91,19 @@ class ResourceSharingFormsProcessor:
     - CSV reporting with detailed results
     """
 
-    def __init__(self, config: Dict[str, Any], dry_run: bool = True):
+    def __init__(self, config: Dict[str, Any], dry_run: bool = True, scheduled_mode: bool = False):
         """
         Initialize the forms processor.
 
         Args:
             config: Configuration dictionary
             dry_run: If True, validate only without API calls
+            scheduled_mode: If True, enable Task Scheduler output channels
+                           (per-file logs, daily reports, run log heartbeat)
         """
         self.config = config
         self.dry_run = dry_run
+        self.scheduled_mode = scheduled_mode
         self.results: List[Dict[str, Any]] = []
         self.processed_files: set = set()
 
@@ -119,6 +123,11 @@ class ResourceSharingFormsProcessor:
 
         # Setup dedicated heartbeat logger for folder monitoring
         self.heartbeat_logger = self.setup_heartbeat_logger()
+
+        # Create file_logs directory for scheduled mode
+        if self.scheduled_mode:
+            file_logs_dir = self.output_dir / 'file_logs'
+            file_logs_dir.mkdir(parents=True, exist_ok=True)
 
         # Initialize Alma clients (unless dry-run)
         if not dry_run:
@@ -144,6 +153,10 @@ class ResourceSharingFormsProcessor:
         """
         Configure logging with file and console handlers.
 
+        In scheduled_mode, uses TimedRotatingFileHandler with daily rotation
+        and 30-day retention to output/logs/processor.log. In watch mode (the
+        default), uses a per-session timestamped file handler.
+
         Returns:
             Configured logger instance
         """
@@ -152,16 +165,30 @@ class ResourceSharingFormsProcessor:
         logs_dir = self.output_dir / 'logs'
         logs_dir.mkdir(exist_ok=True)
 
-        # Log file with timestamp
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        log_file = logs_dir / f'processor_{timestamp}.log'
-
         # Configure logger
         logger = logging.getLogger('ResourceSharingFormsProcessor')
         logger.setLevel(logging.DEBUG)
 
+        # Clear any existing handlers to prevent duplicates on re-initialization
+        logger.handlers.clear()
+
+        if self.scheduled_mode:
+            # Scheduled mode: TimedRotatingFileHandler with daily rotation
+            log_file = logs_dir / 'processor.log'
+            file_handler = logging.handlers.TimedRotatingFileHandler(
+                filename=log_file,
+                when='midnight',
+                interval=1,
+                backupCount=30,  # Retain 30 days of logs
+                encoding='utf-8'
+            )
+        else:
+            # Watch mode: per-session timestamped file
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            log_file = logs_dir / f'processor_{timestamp}.log'
+            file_handler = logging.FileHandler(log_file, encoding='utf-8')
+
         # File handler (DEBUG level)
-        file_handler = logging.FileHandler(log_file, encoding='utf-8')
         file_handler.setLevel(logging.DEBUG)
         file_formatter = logging.Formatter(
             '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -730,35 +757,123 @@ class ResourceSharingFormsProcessor:
             result['error_message'] = f"Unexpected error: {e}"
 
         self.results.append(result)
+
+        # Scheduled mode: write per-file log and append to daily report
+        if self.scheduled_mode:
+            self._write_file_processing_log(result)
+            self._append_daily_report(result)
+
         return result
+
+    def _acquire_lock(self) -> bool:
+        """
+        Acquire a file-based lock to prevent overlapping executions.
+
+        Creates a lock file containing the current PID and timestamp.
+        If a lock file already exists, checks whether the owning process
+        is still alive. Stale locks (from dead processes) are automatically
+        removed.
+
+        Returns:
+            True if lock was acquired, False if another instance is running.
+        """
+        lock_file = self.output_dir / '.processor.lock'
+
+        if lock_file.exists():
+            try:
+                lock_data = json.loads(lock_file.read_text(encoding='utf-8'))
+                existing_pid = lock_data['pid']
+            except (json.JSONDecodeError, KeyError, ValueError):
+                # Corrupt lock file - treat as stale
+                self.logger.info(f"Removing corrupt lock file: {lock_file}")
+                lock_file.unlink(missing_ok=True)
+            else:
+                # Check if the process that owns the lock is still alive
+                try:
+                    os.kill(existing_pid, 0)
+                except OSError:
+                    # Process is dead - stale lock
+                    self.logger.info(f"Removing stale lock from PID {existing_pid}")
+                    lock_file.unlink(missing_ok=True)
+                else:
+                    # Process is still alive
+                    self.logger.warning(
+                        f"Another instance is running (PID {existing_pid}), exiting"
+                    )
+                    return False
+
+        # Create the lock file
+        lock_data = {
+            "pid": os.getpid(),
+            "timestamp": datetime.now().isoformat()
+        }
+        lock_file.write_text(json.dumps(lock_data), encoding='utf-8')
+        self.logger.debug(f"Lock acquired (PID {os.getpid()}): {lock_file}")
+        return True
+
+    def _release_lock(self) -> None:
+        """
+        Release the file-based lock by removing the lock file.
+
+        Handles FileNotFoundError gracefully in case another process
+        has already cleaned it up.
+        """
+        lock_file = self.output_dir / '.processor.lock'
+        try:
+            lock_file.unlink()
+            self.logger.debug(f"Lock released: {lock_file}")
+        except FileNotFoundError:
+            pass
 
     def process_single_run(self) -> None:
         """Process all pending TSV files once and exit."""
-        self.logger.info("\n" + "="*80)
-        self.logger.info("RESOURCE SHARING FORMS PROCESSOR - SINGLE-RUN MODE")
-        self.logger.info("="*80)
-
-        # Find pending files
-        pending_files = self.find_pending_tsv_files()
-
-        if not pending_files:
-            # Heartbeat log: empty folder check in single-run mode
-            self.heartbeat_logger.info(f"Single-run check: No TSV files found in {self.input_folder}")
-            self.logger.info("No TSV files found in input folder")
+        if not self._acquire_lock():
+            self.logger.info("Exiting due to active lock from another instance")
             return
 
-        self.logger.info(f"Found {len(pending_files)} TSV file(s) to process")
+        run_start = time.time()
+        files_found = 0
+        files_processed = 0
+        run_status = 'success'
 
-        # Process each file
-        for i, file_path in enumerate(pending_files, 1):
-            self.logger.info(f"\n[File {i}/{len(pending_files)}]")
-            self.process_tsv_file(file_path)
+        try:
+            self.logger.info("\n" + "="*80)
+            self.logger.info("RESOURCE SHARING FORMS PROCESSOR - SINGLE-RUN MODE")
+            self.logger.info("="*80)
 
-        # Generate report
-        self.generate_csv_report()
+            # Find pending files
+            pending_files = self.find_pending_tsv_files()
+            files_found = len(pending_files)
 
-        # Display summary
-        self.display_summary()
+            if not pending_files:
+                # Heartbeat log: empty folder check in single-run mode
+                self.heartbeat_logger.info(f"Single-run check: No TSV files found in {self.input_folder}")
+                self.logger.info("No TSV files found in input folder")
+                return
+
+            self.logger.info(f"Found {len(pending_files)} TSV file(s) to process")
+
+            # Process each file
+            for i, file_path in enumerate(pending_files, 1):
+                self.logger.info(f"\n[File {i}/{len(pending_files)}]")
+                self.process_tsv_file(file_path)
+                files_processed += 1
+
+            # Generate report: in scheduled_mode the daily report replaces
+            # the per-invocation CSV; in watch/default mode keep existing behavior
+            if not self.scheduled_mode:
+                self.generate_csv_report()
+
+            # Display summary
+            self.display_summary()
+
+        except Exception as e:
+            run_status = 'error'
+            raise
+        finally:
+            duration = time.time() - run_start
+            self._write_run_log_entry(files_found, files_processed, run_status, duration)
+            self._release_lock()
 
     def process_watch_mode(self) -> None:
         """Continuous monitoring mode with graceful shutdown."""
@@ -887,6 +1002,162 @@ class ResourceSharingFormsProcessor:
         self.logger.info(f"  ✗ Errors: {errors}")
         self.logger.info(f"  ⊗ Skipped: {skipped}")
         self.logger.info("="*80)
+
+    def _write_file_processing_log(self, result: Dict[str, Any]) -> None:
+        """
+        Write a detailed per-file processing log for scheduled mode.
+
+        Creates one log file per TSV file processed containing every step
+        performed: identifier detection, metadata fetch, user lookup,
+        lending request creation, and move result.
+
+        Only called in scheduled_mode.
+
+        Args:
+            result: The result dictionary from process_tsv_file()
+        """
+        if not self.scheduled_mode:
+            return
+
+        file_logs_dir = self.output_dir / 'file_logs'
+        file_logs_dir.mkdir(parents=True, exist_ok=True)
+
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        original_name = Path(result.get('filename', 'unknown')).stem
+        log_file = file_logs_dir / f'{timestamp}_{original_name}.log'
+
+        lines = []
+        lines.append(f"Processing Log for: {result.get('filename', 'unknown')}")
+        lines.append(f"Timestamp: {result.get('timestamp', datetime.now().isoformat())}")
+        lines.append(f"{'=' * 60}")
+        lines.append("")
+
+        # Partner / identifier info
+        lines.append(f"Partner Code: {result.get('partner_code', 'N/A')}")
+        lines.append(f"Identifier: {result.get('identifier', 'N/A')}")
+        lines.append(f"Identifier Type (detected): {result.get('detected_type', 'N/A')}")
+        lines.append("")
+
+        # Metadata
+        lines.append("[Metadata]")
+        lines.append(f"Title: {result.get('title', 'N/A')}")
+        lines.append(f"User Name: {result.get('user_name', 'N/A')}")
+        lines.append(f"User ID: {result.get('user_id', 'N/A')}")
+        lines.append(f"Is Faculty: {result.get('is_faculty', 'N/A')}")
+        lines.append(f"Order Number: {result.get('order_number', 'N/A')}")
+        lines.append("")
+
+        # Lending request result
+        lines.append("[Lending Request]")
+        lines.append(f"Status: {result.get('status', 'N/A')}")
+        lines.append(f"Request ID: {result.get('request_id', 'N/A')}")
+        lines.append(f"External ID: {result.get('external_id', 'N/A')}")
+        lines.append("")
+
+        # Error info if any
+        if result.get('error_message'):
+            lines.append("[Error]")
+            lines.append(f"Error Message: {result['error_message']}")
+            lines.append("")
+
+        # Move result
+        move_status = 'moved' if result.get('status') in ['success', 'dry_run_success'] else 'not moved'
+        lines.append(f"[File Move]")
+        lines.append(f"Move Result: {move_status}")
+
+        with open(log_file, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(lines) + '\n')
+
+        self.logger.debug(f"File processing log written: {log_file}")
+
+    def _append_daily_report(self, result: Dict[str, Any]) -> None:
+        """
+        Append a row to the daily processed CSV report for scheduled mode.
+
+        Creates/appends to: output/reports/processed_{YYYYMMDD}.csv
+        If the file does not yet exist today, writes the header row first.
+
+        Only called in scheduled_mode.
+
+        Args:
+            result: The result dictionary from process_tsv_file()
+        """
+        if not self.scheduled_mode:
+            return
+
+        reports_dir = self.output_dir / 'reports'
+        reports_dir.mkdir(parents=True, exist_ok=True)
+
+        today = datetime.now().strftime('%Y%m%d')
+        report_file = reports_dir / f'processed_{today}.csv'
+
+        fieldnames = [
+            'Timestamp', 'Filename', 'Partner_Code', 'Identifier_Type',
+            'Identifier', 'Title', 'Status', 'Request_ID', 'External_ID',
+            'Error_Message'
+        ]
+
+        file_exists = report_file.exists()
+
+        with open(report_file, 'a', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+
+            if not file_exists:
+                writer.writeheader()
+
+            writer.writerow({
+                'Timestamp': result.get('timestamp', ''),
+                'Filename': result.get('filename', ''),
+                'Partner_Code': result.get('partner_code', ''),
+                'Identifier_Type': result.get('detected_type', ''),
+                'Identifier': result.get('identifier', ''),
+                'Title': result.get('title', ''),
+                'Status': result.get('status', ''),
+                'Request_ID': result.get('request_id', ''),
+                'External_ID': result.get('external_id', ''),
+                'Error_Message': result.get('error_message', '')
+            })
+
+        self.logger.debug(f"Daily report appended: {report_file}")
+
+    def _write_run_log_entry(self, files_found: int, files_processed: int,
+                             status: str, duration: float) -> None:
+        """
+        Write a single-line heartbeat entry to the daily run log.
+
+        Appends to: output/logs/runs_{YYYYMMDD}.log
+        Format: {timestamp} | files_found={N} | files_processed={N} | status={success|error} | duration={N.N}s
+
+        Called at the end of process_single_run() in the finally block,
+        even when 0 files are found, to record that the run happened.
+
+        Only called in scheduled_mode.
+
+        Args:
+            files_found: Number of TSV files found in input folder
+            files_processed: Number of files actually processed
+            status: Run status ('success' or 'error')
+            duration: Total run duration in seconds
+        """
+        if not self.scheduled_mode:
+            return
+
+        logs_dir = self.output_dir / 'logs'
+        logs_dir.mkdir(parents=True, exist_ok=True)
+
+        today = datetime.now().strftime('%Y%m%d')
+        run_log_file = logs_dir / f'runs_{today}.log'
+
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        entry = (
+            f"{timestamp} | files_found={files_found} | files_processed={files_processed} "
+            f"| status={status} | duration={duration:.1f}s\n"
+        )
+
+        with open(run_log_file, 'a', encoding='utf-8') as f:
+            f.write(entry)
+
+        self.logger.debug(f"Run log entry written: {run_log_file}")
 
     def run(self, watch_mode: bool = False) -> bool:
         """
@@ -1103,9 +1374,14 @@ Examples:
     # Determine dry-run mode
     dry_run = not args.live
 
+    # Determine scheduled mode: active when NOT in watch mode
+    scheduled_mode = not args.watch
+
     # Initialize and run processor
     try:
-        processor = ResourceSharingFormsProcessor(config, dry_run=dry_run)
+        processor = ResourceSharingFormsProcessor(
+            config, dry_run=dry_run, scheduled_mode=scheduled_mode
+        )
         success = processor.run(watch_mode=args.watch)
         sys.exit(0 if success else 1)
 
