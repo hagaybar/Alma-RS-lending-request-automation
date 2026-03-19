@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "2026.01.tasks-v1",
+  "effectId": "01KM36YEYS8TJDJS40GFWTBNV2",
+  "taskId": "run-tests",
+  "invocationKey": "task-scheduler-migration:S000005:run-tests",
+  "stepId": "S000005",
+  "kind": "shell",
+  "title": "Phase 5: Run test suite - Alma RS Lending Request Automation",
+  "labels": [
+    "testing",
+    "verification"
+  ],
+  "inputs": {
+    "projectName": "Alma RS Lending Request Automation"
+  }
+}

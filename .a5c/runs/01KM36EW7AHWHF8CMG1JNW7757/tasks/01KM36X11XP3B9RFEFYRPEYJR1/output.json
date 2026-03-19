@@ -1,0 +1,4 @@
+{
+  "filesCreated": ["batch/rs_forms_scheduled.bat", "batch/rs_forms_scheduled_sandbox.bat"],
+  "summary": "Created production and sandbox Task Scheduler batch files. Both use --live, no --watch, no pause, exit /b %ERRORLEVEL%."
+}

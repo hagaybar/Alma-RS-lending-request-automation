@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "2026.01.results-v1",
+  "effectId": "01KM37208BJJ42K4DMR7HET0V4",
+  "taskId": "__sdk.breakpoint",
+  "invocationKey": "task-scheduler-migration:S000007:__sdk.breakpoint",
+  "status": "ok",
+  "result": {
+    "approved": true,
+    "response": "Approve, generate docs"
+  },
+  "startedAt": "2026-03-19T14:13:31.817Z",
+  "finishedAt": "2026-03-19T14:13:31.817Z",
+  "value": {
+    "approved": true,
+    "response": "Approve, generate docs"
+  }
+}

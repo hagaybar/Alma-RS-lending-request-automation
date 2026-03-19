@@ -1,0 +1,23 @@
+{
+  "schemaVersion": "2026.01.results-v1",
+  "effectId": "01KM36X11XP3B9RFEFYRPEYJR1",
+  "taskId": "create-batch-file",
+  "invocationKey": "task-scheduler-migration:S000004:create-batch-file",
+  "status": "ok",
+  "result": {
+    "filesCreated": [
+      "batch/rs_forms_scheduled.bat",
+      "batch/rs_forms_scheduled_sandbox.bat"
+    ],
+    "summary": "Created production and sandbox Task Scheduler batch files. Both use --live, no --watch, no pause, exit /b %ERRORLEVEL%."
+  },
+  "startedAt": "2026-03-19T14:10:40.685Z",
+  "finishedAt": "2026-03-19T14:10:40.685Z",
+  "value": {
+    "filesCreated": [
+      "batch/rs_forms_scheduled.bat",
+      "batch/rs_forms_scheduled_sandbox.bat"
+    ],
+    "summary": "Created production and sandbox Task Scheduler batch files. Both use --live, no --watch, no pause, exit /b %ERRORLEVEL%."
+  }
+}

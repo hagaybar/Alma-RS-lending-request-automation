@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "2026.01.results-v1",
+  "effectId": "01KM36Q2GVY5QEXD8E6SPB3D7T",
+  "taskId": "update-logging",
+  "invocationKey": "task-scheduler-migration:S000003:update-logging",
+  "status": "ok",
+  "result": {
+    "filesModified": [
+      "resource_sharing_forms_processor.py"
+    ],
+    "methodsAdded": [
+      "_write_file_processing_log",
+      "_append_daily_report",
+      "_write_run_log_entry"
+    ],
+    "methodsModified": [
+      "__init__",
+      "setup_logging",
+      "process_single_run",
+      "process_tsv_file",
+      "main"
+    ],
+    "summary": "Added 3 output channels for scheduled mode: (1) per-file processing log to output/file_logs/, (2) daily append CSV to output/reports/processed_{date}.csv, (3) daily run heartbeat to output/logs/runs_{date}.log. Added scheduled_mode parameter to __init__. setup_logging() uses TimedRotatingFileHandler in scheduled mode. main() passes scheduled_mode=not args.watch. All watch mode behavior preserved."
+  },
+  "startedAt": "2026-03-19T14:09:51.960Z",
+  "finishedAt": "2026-03-19T14:09:51.960Z",
+  "value": {
+    "filesModified": [
+      "resource_sharing_forms_processor.py"
+    ],
+    "methodsAdded": [
+      "_write_file_processing_log",
+      "_append_daily_report",
+      "_write_run_log_entry"
+    ],
+    "methodsModified": [
+      "__init__",
+      "setup_logging",
+      "process_single_run",
+      "process_tsv_file",
+      "main"
+    ],
+    "summary": "Added 3 output channels for scheduled mode: (1) per-file processing log to output/file_logs/, (2) daily append CSV to output/reports/processed_{date}.csv, (3) daily run heartbeat to output/logs/runs_{date}.log. Added scheduled_mode parameter to __init__. setup_logging() uses TimedRotatingFileHandler in scheduled mode. main() passes scheduled_mode=not args.watch. All watch mode behavior preserved."
+  }
+}

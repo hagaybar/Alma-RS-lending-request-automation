@@ -1,0 +1,20 @@
+{
+  "type": "EFFECT_REQUESTED",
+  "recordedAt": "2026-03-19T14:11:08.480Z",
+  "data": {
+    "effectId": "01KM36Z4HNRDZVPGC8E2WJAK4V",
+    "invocationKey": "task-scheduler-migration:S000006:quality-verification",
+    "invocationHash": "d9211390b14feadd5df549373913adeee4535a15b90e067c8ef7a16b0f2d71fd",
+    "stepId": "S000006",
+    "taskId": "quality-verification",
+    "kind": "agent",
+    "label": "quality",
+    "taskDefRef": "tasks/01KM36Z4HNRDZVPGC8E2WJAK4V/task.json",
+    "labels": [
+      "quality",
+      "verification",
+      "review"
+    ]
+  },
+  "checksum": "6cff9b572cac4616859ee1585fdb0a203a76ffefb97d02e82da49df5c68440c7"
+}

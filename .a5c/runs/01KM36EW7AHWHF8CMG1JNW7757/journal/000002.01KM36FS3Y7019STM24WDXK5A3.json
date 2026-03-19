@@ -1,0 +1,19 @@
+{
+  "type": "EFFECT_REQUESTED",
+  "recordedAt": "2026-03-19T14:02:45.246Z",
+  "data": {
+    "effectId": "01KM36FS3FYN5R910NVE0T015S",
+    "invocationKey": "task-scheduler-migration:S000001:analyze-code",
+    "invocationHash": "4b5ed2e81230e87000591ca06a2bde414609ae871de410f2d4c7ae25aad15cb6",
+    "stepId": "S000001",
+    "taskId": "analyze-code",
+    "kind": "agent",
+    "label": "analysis",
+    "taskDefRef": "tasks/01KM36FS3FYN5R910NVE0T015S/task.json",
+    "labels": [
+      "analysis",
+      "planning"
+    ]
+  },
+  "checksum": "a89c2cbb6ed0d9af213146eda1b81a1c7f477f5010c085348877cf9219ec3955"
+}

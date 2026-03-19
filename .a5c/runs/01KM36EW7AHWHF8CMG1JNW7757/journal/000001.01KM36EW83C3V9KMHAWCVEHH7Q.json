@@ -1,0 +1,15 @@
+{
+  "type": "RUN_CREATED",
+  "recordedAt": "2026-03-19T14:02:15.683Z",
+  "data": {
+    "runId": "01KM36EW7AHWHF8CMG1JNW7757",
+    "processId": "task-scheduler-migration",
+    "entrypoint": {
+      "importPath": "../../processes/task-scheduler-migration.js",
+      "exportName": "process"
+    },
+    "inputsRef": "inputs.json",
+    "prompt": "Migrate folder-monitoring script from continuous watch mode to Windows Task Scheduler single-run invocations. Add lock file mechanism, implement 3-channel output structure (per-file log, daily processed CSV, daily run heartbeat), create scheduled batch files, and generate deployment documentation."
+  },
+  "checksum": "459bfb8abb2d0bf0ea6b2bd92c7a8ca253d48bead9cc74bafe60bc700856c011"
+}

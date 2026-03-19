@@ -1,0 +1,20 @@
+{
+  "type": "EFFECT_REQUESTED",
+  "recordedAt": "2026-03-19T14:06:44.263Z",
+  "data": {
+    "effectId": "01KM36Q2GVY5QEXD8E6SPB3D7T",
+    "invocationKey": "task-scheduler-migration:S000003:update-logging",
+    "invocationHash": "7ff742f83744bde18504e2819198a419717aae4f52ecddac59efd116e1ec55bc",
+    "stepId": "S000003",
+    "taskId": "update-logging",
+    "kind": "agent",
+    "label": "implementation",
+    "taskDefRef": "tasks/01KM36Q2GVY5QEXD8E6SPB3D7T/task.json",
+    "labels": [
+      "implementation",
+      "logging",
+      "output-structure"
+    ]
+  },
+  "checksum": "d0d4b6fbbddbc4913db59839f78490a6b1ef65750c4ab53853b0b33107449776"
+}

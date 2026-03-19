@@ -1,0 +1,27 @@
+{
+  "schemaVersion": "2026.01.results-v1",
+  "effectId": "01KM373P4EPE8DQ4JRGX0BJBKS",
+  "taskId": "generate-docs",
+  "invocationKey": "task-scheduler-migration:S000008:generate-docs",
+  "status": "ok",
+  "result": {
+    "filesCreated": [
+      "docs/TASK_SCHEDULER_SETUP.md"
+    ],
+    "filesModified": [
+      "CLAUDE.md"
+    ],
+    "summary": "Created comprehensive TASK_SCHEDULER_SETUP.md (273 lines) covering prerequisites, environment variables, step-by-step Task Scheduler configuration, verification steps, troubleshooting, rollback plan, and output structure reference. Updated CLAUDE.md Deployment section to reflect implemented state with lock file, 3 output channels, batch files, and link to setup guide."
+  },
+  "startedAt": "2026-03-19T14:16:26.560Z",
+  "finishedAt": "2026-03-19T14:16:26.560Z",
+  "value": {
+    "filesCreated": [
+      "docs/TASK_SCHEDULER_SETUP.md"
+    ],
+    "filesModified": [
+      "CLAUDE.md"
+    ],
+    "summary": "Created comprehensive TASK_SCHEDULER_SETUP.md (273 lines) covering prerequisites, environment variables, step-by-step Task Scheduler configuration, verification steps, troubleshooting, rollback plan, and output structure reference. Updated CLAUDE.md Deployment section to reflect implemented state with lock file, 3 output channels, batch files, and link to setup guide."
+  }
+}

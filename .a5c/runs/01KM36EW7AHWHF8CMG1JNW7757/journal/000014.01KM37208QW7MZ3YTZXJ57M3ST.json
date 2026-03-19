@@ -1,0 +1,18 @@
+{
+  "type": "EFFECT_REQUESTED",
+  "recordedAt": "2026-03-19T14:12:42.391Z",
+  "data": {
+    "effectId": "01KM37208BJJ42K4DMR7HET0V4",
+    "invocationKey": "task-scheduler-migration:S000007:__sdk.breakpoint",
+    "invocationHash": "941d67db40d783bc521208fa04ff23eeb2c12aefce98f32a3cf718d102f53ff9",
+    "stepId": "S000007",
+    "taskId": "__sdk.breakpoint",
+    "kind": "breakpoint",
+    "label": "breakpoint",
+    "taskDefRef": "tasks/01KM37208BJJ42K4DMR7HET0V4/task.json",
+    "labels": [
+      "breakpoint"
+    ]
+  },
+  "checksum": "df605019eb9086e6790519cfaed34255da0e66b8ca1eb3f363c32fad1d237b90"
+}

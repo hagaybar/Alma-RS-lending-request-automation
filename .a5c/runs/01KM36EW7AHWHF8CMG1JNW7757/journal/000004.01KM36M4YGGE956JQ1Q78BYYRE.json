@@ -1,0 +1,20 @@
+{
+  "type": "EFFECT_REQUESTED",
+  "recordedAt": "2026-03-19T14:05:08.432Z",
+  "data": {
+    "effectId": "01KM36M4Y5S3Q56AC24J15R7EM",
+    "invocationKey": "task-scheduler-migration:S000002:implement-lock-file",
+    "invocationHash": "ceb35da56d726a9dd5b37f53cadc0ec085d2947ca49966ba39cd2299238c67af",
+    "stepId": "S000002",
+    "taskId": "implement-lock-file",
+    "kind": "agent",
+    "label": "implementation",
+    "taskDefRef": "tasks/01KM36M4Y5S3Q56AC24J15R7EM/task.json",
+    "labels": [
+      "implementation",
+      "lock-file",
+      "critical"
+    ]
+  },
+  "checksum": "a4da25525284fb4b2ffba1b0e9e40b9d8ee717adaf8d54de84fb3b998afe1ac9"
+}

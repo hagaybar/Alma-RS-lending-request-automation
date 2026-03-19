@@ -1,0 +1,5 @@
+{
+  "projectName": "Alma RS Lending Request Automation",
+  "mainScript": "resource_sharing_forms_processor.py",
+  "targetQuality": 85
+}

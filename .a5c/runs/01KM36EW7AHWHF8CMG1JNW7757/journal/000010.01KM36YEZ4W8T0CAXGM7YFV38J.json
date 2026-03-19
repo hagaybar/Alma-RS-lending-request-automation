@@ -1,0 +1,19 @@
+{
+  "type": "EFFECT_REQUESTED",
+  "recordedAt": "2026-03-19T14:10:46.372Z",
+  "data": {
+    "effectId": "01KM36YEYS8TJDJS40GFWTBNV2",
+    "invocationKey": "task-scheduler-migration:S000005:run-tests",
+    "invocationHash": "4fe2bfb08661b827d45ba61907397c845b38716309f31bce27ce20491b7f3863",
+    "stepId": "S000005",
+    "taskId": "run-tests",
+    "kind": "shell",
+    "label": "testing",
+    "taskDefRef": "tasks/01KM36YEYS8TJDJS40GFWTBNV2/task.json",
+    "labels": [
+      "testing",
+      "verification"
+    ]
+  },
+  "checksum": "b8c3b0ce05503afa24a4a1254d9c8f0eb0d977dda5a13a986c11c309a14548f9"
+}

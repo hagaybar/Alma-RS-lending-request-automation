@@ -1,0 +1,20 @@
+{
+  "type": "EFFECT_REQUESTED",
+  "recordedAt": "2026-03-19T14:09:59.369Z",
+  "data": {
+    "effectId": "01KM36X11XP3B9RFEFYRPEYJR1",
+    "invocationKey": "task-scheduler-migration:S000004:create-batch-file",
+    "invocationHash": "bced5674aee7913e2784d502b7f028b1bc96cb4e949679c1ac3a629c35367f00",
+    "stepId": "S000004",
+    "taskId": "create-batch-file",
+    "kind": "agent",
+    "label": "implementation",
+    "taskDefRef": "tasks/01KM36X11XP3B9RFEFYRPEYJR1/task.json",
+    "labels": [
+      "implementation",
+      "batch-file",
+      "deployment"
+    ]
+  },
+  "checksum": "e214fc327e41ee5af0037b6a47f60e4e43d2d1fc4885819944ab13ce018f19ba"
+}

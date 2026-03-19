@@ -1,0 +1,19 @@
+{
+  "type": "EFFECT_REQUESTED",
+  "recordedAt": "2026-03-19T14:13:37.562Z",
+  "data": {
+    "effectId": "01KM373P4EPE8DQ4JRGX0BJBKS",
+    "invocationKey": "task-scheduler-migration:S000008:generate-docs",
+    "invocationHash": "d241ca6c94821ae854ecc309768ef3fb7bb3156ef29bd36a678cb0162b429f6d",
+    "stepId": "S000008",
+    "taskId": "generate-docs",
+    "kind": "agent",
+    "label": "documentation",
+    "taskDefRef": "tasks/01KM373P4EPE8DQ4JRGX0BJBKS/task.json",
+    "labels": [
+      "documentation",
+      "deployment"
+    ]
+  },
+  "checksum": "fe5efc2c581cf8371cb5d0be9e64b410b789f8c352b776637e80a22f2d7547bb"
+}

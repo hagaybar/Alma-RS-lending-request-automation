@@ -1,0 +1,33 @@
+{
+  "lockFileStrategy": {
+    "lockPath": "output/.processor.lock",
+    "location": "Top of process_single_run(), before find_pending_tsv_files()",
+    "pidTracking": "Write PID via os.getpid() and timestamp as JSON to lock file",
+    "staleDetection": "os.kill(pid, 0) for PID liveness, mtime age fallback (10 min threshold)"
+  },
+  "loggingChanges": {
+    "perFileLog": "New output/file_logs/{YYYYMMDD}_{HHMMSS}_{filename}.log per TSV file with detailed step-by-step processing",
+    "dailyReport": "Daily append CSV output/reports/processed_{YYYYMMDD}.csv - header on first write, append rows after",
+    "dailyRunLog": "Daily output/logs/runs_{YYYYMMDD}.log - one line per invocation with timestamp, files_found, files_processed, status, duration",
+    "generalLog": "TimedRotatingFileHandler daily rotation to output/logs/processor.log for scheduled mode"
+  },
+  "batchFileSpec": {
+    "prodPath": "batch/rs_forms_scheduled.bat",
+    "sandboxPath": "batch/rs_forms_scheduled_sandbox.bat",
+    "contents": "No --watch, no pause, exit /b %ERRORLEVEL%, full paths, headless"
+  },
+  "affectedMethods": [
+    "__init__() - add scheduled_mode parameter",
+    "setup_logging() - daily rotation for scheduled mode",
+    "process_single_run() - lock acquire/release, run log entry",
+    "process_tsv_file() - per-file log output",
+    "generate_csv_report() - daily append CSV",
+    "main() - pass scheduled_mode"
+  ],
+  "riskAssessment": [
+    {"risk": "Overlapping executions creating duplicate lending requests", "severity": "HIGH", "mitigation": "Lock file with PID + Task Scheduler 'do not start new instance'"},
+    {"risk": "Stale lock after crash blocks all future runs", "severity": "HIGH", "mitigation": "PID liveness check + mtime age fallback"},
+    {"risk": "Daily CSV corruption on mid-write crash", "severity": "MEDIUM", "mitigation": "Append mode, flush after each row"},
+    {"risk": "Breaking watch mode during migration", "severity": "MEDIUM", "mitigation": "All changes additive, watch mode preserved"}
+  ]
+}

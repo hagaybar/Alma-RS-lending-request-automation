@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "2026.01.tasks-v1",
+  "effectId": "01KM36FS3FYN5R910NVE0T015S",
+  "taskId": "analyze-code",
+  "invocationKey": "task-scheduler-migration:S000001:analyze-code",
+  "stepId": "S000001",
+  "kind": "agent",
+  "title": "Phase 1: Analyze current code - Alma RS Lending Request Automation",
+  "labels": [
+    "analysis",
+    "planning"
+  ],
+  "io": {
+    "inputJsonPath": "tasks/01KM36FS3FYN5R910NVE0T015S/input.json",
+    "outputJsonPath": "tasks/01KM36FS3FYN5R910NVE0T015S/result.json"
+  },
+  "inputs": {
+    "mainScript": "resource_sharing_forms_processor.py",
+    "projectName": "Alma RS Lending Request Automation"
+  }
+}
