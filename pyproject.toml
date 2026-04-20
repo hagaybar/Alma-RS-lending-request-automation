@@ -8,7 +8,7 @@ package-mode = false
 
 [tool.poetry.dependencies]
 python = "^3.12"
-almaapitk = { git = "https://github.com/hagaybar/AlmaAPITK.git", tag = "v0.2.2" }
+almaapitk = { git = "https://github.com/hagaybar/AlmaAPITK.git", tag = "v0.2.3" }
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0"
