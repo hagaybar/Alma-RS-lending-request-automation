@@ -21,9 +21,18 @@ ENV/
 # Secrets and production configs
 .env
 *.env
-config/*_prod*.json
-config/*_sandbox*.json
-config/test_config.json
+# All real configs are local-only (institution-specific values).
+# Only the example template stays tracked.
+config/*.json
+!config/*.example.json
+
+# Local-only prod batch launcher (counterpart to the tracked sandbox launcher).
+# Tracked sibling: batch/rs_forms_monitor_sandbox.bat
+# TODO: commit this from Masedet for parity (separate hygiene task).
+batch/rs_forms_monitor_prod.bat
+
+# Runtime logs directory at repo root (in addition to output/logs/ already covered)
+logs/
 
 # Data files (user data, never commit)
 input/*.tsv
