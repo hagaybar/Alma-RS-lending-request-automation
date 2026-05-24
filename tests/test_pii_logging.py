@@ -38,3 +38,41 @@ def test_pii_filter_drops_flagged_record():
 
 def test_pii_filter_passes_normal_record():
     assert PiiConsoleFilter().filter(_record(pii=False)) is True
+
+
+from resource_sharing_forms_processor import ResourceSharingFormsProcessor
+
+
+def test_note_pii_in_file_not_on_console(tmp_path, capsys):
+    config = {
+        "alma_settings": {"environment": "SANDBOX", "owner": "AM1", "format_type": "DIGITAL"},
+        "file_processing": {
+            "input_folder": str(tmp_path / "input"),
+            "processed_folder": str(tmp_path / "processed"),
+            "output_dir": str(tmp_path / "output"),
+        },
+    }
+    proc = ResourceSharingFormsProcessor(config, dry_run=True)
+    form_data = {
+        "partner_code": "ANC",
+        "identifier": "12345678",  # 8-digit PMID
+        "user_name": "Jane Patron",
+        "user_id": "0273601",
+        "is_faculty": "Yes",
+        "notes": "",
+        "order_number": "",
+    }
+    proc.create_lending_request_from_form(form_data)
+
+    for h in proc.logger.handlers:
+        h.flush()
+    log_text = "\n".join(
+        p.read_text(encoding="utf-8")
+        for p in (tmp_path / "output" / "logs").glob("*.log")
+    )
+    out = capsys.readouterr().out
+
+    # Full PII present in the local file log...
+    assert "Jane Patron" in log_text
+    # ...but never on the console/stdout.
+    assert "Jane Patron" not in out

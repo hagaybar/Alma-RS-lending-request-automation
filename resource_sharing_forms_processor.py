@@ -239,6 +239,18 @@ class ResourceSharingFormsProcessor:
         logger.info(f"Logging initialized - Log file: {log_file}")
         return logger
 
+    def _log_pii(self, level: int, full_msg: str, safe_msg: Optional[str] = None) -> None:
+        """Log PII-bearing detail to the file sink only, plus an optional
+        sanitized companion that may reach the console.
+
+        ``full_msg`` is flagged ``pii=True`` so PiiConsoleFilter suppresses it
+        on the console while the file handler still records it. ``safe_msg``,
+        when given, is logged normally and may appear on the console.
+        """
+        self.logger.log(level, full_msg, extra={"pii": True})
+        if safe_msg is not None:
+            self.logger.log(level, safe_msg)
+
     def setup_heartbeat_logger(self) -> logging.Logger:
         """
         Configure a dedicated logger for folder monitoring heartbeat events.
@@ -392,7 +404,7 @@ class ResourceSharingFormsProcessor:
         user_id = user_id.strip()
 
         try:
-            self.logger.debug(f"Looking up user in Alma: {user_id}")
+            self._log_pii(logging.DEBUG, f"Looking up user in Alma: {user_id}")
             response = self.users.get_user(user_id)
             user_data = response.data
 
@@ -410,9 +422,12 @@ class ResourceSharingFormsProcessor:
             # Check Academic Staff
             is_academic_staff = (user_group_value == self.ACADEMIC_STAFF_CODE)
 
-            self.logger.info(
+            self._log_pii(
+                logging.INFO,
                 f"User lookup successful: {user_id} -> {full_name} "
-                f"(group: {user_group_desc}, is_academic_staff: {is_academic_staff})"
+                f"(group: {user_group_desc}, is_academic_staff: {is_academic_staff})",
+                f"User {mask_user_id(user_id)}: lookup OK "
+                f"(is_academic_staff: {is_academic_staff})",
             )
 
             return {
@@ -424,12 +439,24 @@ class ResourceSharingFormsProcessor:
 
         except AlmaAPIError as e:
             if e.status_code == 404:
-                self.logger.warning(f"User not found in Alma: {user_id}")
+                self._log_pii(
+                    logging.WARNING,
+                    f"User not found in Alma: {user_id}",
+                    f"User not found in Alma: {mask_user_id(user_id)}",
+                )
             else:
-                self.logger.warning(f"Alma API error looking up user {user_id}: {e}")
+                self._log_pii(
+                    logging.WARNING,
+                    f"Alma API error looking up user {user_id}: {e}",
+                    f"Alma API error looking up user {mask_user_id(user_id)}: {e}",
+                )
             return None
         except Exception as e:
-            self.logger.warning(f"Unexpected error looking up user {user_id}: {e}")
+            self._log_pii(
+                logging.WARNING,
+                f"Unexpected error looking up user {user_id}: {e}",
+                f"Unexpected error looking up user {mask_user_id(user_id)}: {e}",
+            )
             return None
 
     def find_pending_tsv_files(self) -> List[Path]:
@@ -526,7 +553,10 @@ class ResourceSharingFormsProcessor:
 
             self.logger.debug(f"Parsed TSV file: {file_path.name}")
             self.logger.debug(f"  Partner: {form_data['partner_code']}")
-            self.logger.debug(f"  Requester: {form_data['user_name']} ({form_data['user_id']})")
+            self._log_pii(
+                logging.DEBUG,
+                f"  Requester: {form_data['user_name']} ({form_data['user_id']})",
+            )
             self.logger.debug(f"  Faculty: {form_data['is_faculty']}")
             self.logger.debug(f"  Identifier: {form_data['identifier']}")
             self.logger.debug(f"  Order Number: {form_data['order_number']}")
@@ -683,7 +713,14 @@ class ResourceSharingFormsProcessor:
             # No note at all (valid when no user fields and no comments)
             params['note'] = ''
 
-        self.logger.info(f"  Note: {params['note'][:100]}..." if params.get('note') else "  Note: (empty)")
+        if params.get('note'):
+            self._log_pii(
+                logging.INFO,
+                f"  Note: {params['note'][:100]}...",
+                "  Note: (recorded — see file log)",
+            )
+        else:
+            self.logger.info("  Note: (empty)")
 
         # Create request (or dry-run)
         if not self.dry_run:
