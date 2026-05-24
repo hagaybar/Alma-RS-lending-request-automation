@@ -47,7 +47,7 @@ poetry run python resource_sharing_forms_processor.py --config config/rs_forms_c
 - Python 3.12+, managed via Poetry
 - `ALMA_SB_API_KEY` — Required for SANDBOX environment
 - `ALMA_PROD_API_KEY` — Required for PRODUCTION environment
-- Depends on `almaapitk` (git dependency, pinned to v0.2.2)
+- Depends on `almaapitk` (PyPI, pinned `>=0.4.5` — floor includes the logging credential-leak fix)
 
 ## Deployment
 
