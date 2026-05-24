@@ -79,6 +79,21 @@ class FileProcessingError(ProcessingError):
     pass
 
 
+def mask_user_id(user_id: Optional[str]) -> str:
+    """Mask a patron identifier for safe console display.
+
+    Keeps only the last 4 characters so operators can correlate a console
+    warning with a record without exposing the full ID. Full IDs are written
+    to the local (gitignored) file log, never the console.
+    """
+    if not user_id:
+        return "***"
+    uid = str(user_id)
+    if len(uid) <= 4:
+        return "***"
+    return "*" * (len(uid) - 4) + uid[-4:]
+
+
 class ResourceSharingFormsProcessor:
     """
     Processes Microsoft Forms submissions to create Alma lending requests.
