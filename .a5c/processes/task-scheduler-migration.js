@@ -182,7 +182,7 @@ Read the actual code files. Do NOT just describe what you think they contain.`,
       context: {
         projectName: args.projectName,
         mainScript: args.mainScript,
-        projectRoot: '/home/hagaybar/projects/Alma-RS-lending-request-automation'
+        projectRoot: '.'
       },
       instructions: [
         'Read resource_sharing_forms_processor.py thoroughly',
@@ -246,7 +246,7 @@ REQUIREMENTS:
 
 IMPORTANT: Read the current file first, then make targeted edits. Do NOT rewrite the entire file. Preserve all existing functionality.`,
       context: {
-        projectRoot: '/home/hagaybar/projects/Alma-RS-lending-request-automation',
+        projectRoot: '.',
         mainScript: args.mainScript,
         analysis: args.analysis
       },
@@ -323,7 +323,7 @@ ALSO:
 
 IMPORTANT: Read the current file first. Make targeted edits. Do NOT rewrite the entire file. Preserve all existing watch mode behavior.`,
       context: {
-        projectRoot: '/home/hagaybar/projects/Alma-RS-lending-request-automation',
+        projectRoot: '.',
         mainScript: args.mainScript,
         analysis: args.analysis,
         outputRequirements: args.outputRequirements
@@ -385,7 +385,7 @@ Also create batch/rs_forms_scheduled_sandbox.bat with the same structure but poi
 
 IMPORTANT: Read the existing batch/rs_forms_monitor_sandbox.bat first to understand the current pattern.`,
       context: {
-        projectRoot: '/home/hagaybar/projects/Alma-RS-lending-request-automation',
+        projectRoot: '.',
         analysis: args.analysis
       },
       instructions: [
@@ -416,7 +416,7 @@ export const runTestsTask = defineTask('run-tests', (args, taskCtx) => ({
   kind: 'shell',
   title: `Phase 5: Run test suite - ${args.projectName}`,
   shell: {
-    command: 'cd /home/hagaybar/projects/Alma-RS-lending-request-automation && poetry run pytest -v 2>&1'
+    command: 'poetry run pytest -v 2>&1'
   },
   labels: ['testing', 'verification']
 }));
@@ -457,7 +457,7 @@ export const qualityVerificationTask = defineTask('quality-verification', (args,
 
 Score the implementation quality 0-100 based on completeness, correctness, and adherence to the plan.`,
       context: {
-        projectRoot: '/home/hagaybar/projects/Alma-RS-lending-request-automation',
+        projectRoot: '.',
         mainScript: args.mainScript,
         testResult: args.testResult,
         targetQuality: args.targetQuality
@@ -518,7 +518,7 @@ Include:
 
 IMPORTANT: Also update the project CLAUDE.md deployment section to reflect the new state.`,
       context: {
-        projectRoot: '/home/hagaybar/projects/Alma-RS-lending-request-automation',
+        projectRoot: '.',
         lockFileResult: args.lockFileResult,
         loggingResult: args.loggingResult,
         batchFileResult: args.batchFileResult

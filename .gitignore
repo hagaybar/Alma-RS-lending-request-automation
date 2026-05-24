@@ -61,3 +61,7 @@ htmlcov/
 
 # Babysitter SDK
 .a5c/node_modules/
+
+# Babysitter runtime (local-only; keep run history off the public repo)
+.a5c/runs/
+.a5c/cache/
