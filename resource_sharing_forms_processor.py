@@ -94,6 +94,19 @@ def mask_user_id(user_id: Optional[str]) -> str:
     return "*" * (len(uid) - 4) + uid[-4:]
 
 
+class PiiConsoleFilter(logging.Filter):
+    """Drops log records flagged as containing PII.
+
+    Attached to the console/stdout handler only. Records emitted with
+    ``extra={'pii': True}`` are written to the file handler (local,
+    gitignored) but suppressed on the console, so patron data never reaches
+    stdout (terminal snapshots, agent capture, LLM exposure).
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not getattr(record, "pii", False)
+
+
 class ResourceSharingFormsProcessor:
     """
     Processes Microsoft Forms submissions to create Alma lending requests.
@@ -217,6 +230,7 @@ class ResourceSharingFormsProcessor:
         console_handler.setLevel(console_level)
         console_formatter = logging.Formatter('%(levelname)s: %(message)s')
         console_handler.setFormatter(console_formatter)
+        console_handler.addFilter(PiiConsoleFilter())
 
         # Add handlers
         logger.addHandler(file_handler)
