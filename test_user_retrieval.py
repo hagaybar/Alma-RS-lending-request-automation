@@ -1,19 +1,103 @@
 #!/usr/bin/env python3
 """
-Simple test script to retrieve user information from Alma API.
+Simple diagnostic to retrieve user information from Alma API.
+
+By default, contact fields (email, phone, address) are masked and the raw
+JSON is suppressed, so running this does not spill patron PII to the terminal.
+Pass --show-raw to print the full unmasked record (explicit opt-in).
 
 Usage:
     python test_user_retrieval.py
     python test_user_retrieval.py --user-id 027393602
-    python test_user_retrieval.py --environment PRODUCTION
+    python test_user_retrieval.py --environment PRODUCTION --show-raw
 """
 
 import argparse
 import json
 import sys
-from pathlib import Path
 
 from almaapitk import AlmaAPIClient, Users
+
+
+def _mask_email(addr: str) -> str:
+    if not addr or "@" not in addr:
+        return "***"
+    return "***@" + addr.split("@", 1)[1]
+
+
+def _mask_phone(num: str) -> str:
+    if not num:
+        return "***"
+    digits = str(num)
+    return "***" + digits[-2:] if len(digits) > 2 else "***"
+
+
+def format_user_report(user_data: dict, show_raw: bool = False) -> str:
+    """Build the human-readable user report.
+
+    Identity fields (name, group, status) are shown; contact fields are
+    masked unless show_raw is True. The full JSON is included only when
+    show_raw is True.
+    """
+    lines = []
+    lines.append(f"Primary ID:    {user_data.get('primary_id', 'N/A')}")
+    lines.append(f"First Name:    {user_data.get('first_name', 'N/A')}")
+    lines.append(f"Last Name:     {user_data.get('last_name', 'N/A')}")
+    lines.append(f"Full Name:     {user_data.get('full_name', 'N/A')}")
+    lines.append(f"User Group:    {user_data.get('user_group', {}).get('desc', 'N/A')}")
+    lines.append(f"Status:        {user_data.get('status', {}).get('desc', 'N/A')}")
+    lines.append(f"Account Type:  {user_data.get('account_type', {}).get('desc', 'N/A')}")
+    lines.append(f"Expiry Date:   {user_data.get('expiry_date', 'N/A')}")
+
+    contact_info = user_data.get("contact_info", {})
+
+    lines.append("")
+    lines.append("Email Addresses:")
+    emails = contact_info.get("email", [])
+    if emails:
+        for email in emails:
+            preferred = " (preferred)" if email.get("preferred") else ""
+            raw = email.get("email_address", "N/A")
+            shown = raw if show_raw else _mask_email(raw)
+            lines.append(f"  - {shown}{preferred}")
+    else:
+        lines.append("  (no emails found)")
+
+    lines.append("")
+    lines.append("Phone Numbers:")
+    phones = contact_info.get("phone", [])
+    if phones:
+        for phone in phones:
+            preferred = " (preferred)" if phone.get("preferred") else ""
+            raw = phone.get("phone_number", "N/A")
+            shown = raw if show_raw else _mask_phone(raw)
+            lines.append(f"  - {shown}{preferred}")
+    else:
+        lines.append("  (no phones found)")
+
+    lines.append("")
+    lines.append("Addresses:")
+    addresses = contact_info.get("address", [])
+    if addresses:
+        for addr in addresses:
+            preferred = " (preferred)" if addr.get("preferred") else ""
+            country = addr.get("country", {}).get("desc", "")
+            if show_raw:
+                city = addr.get("city", "")
+                lines.append(f"  - {city}, {country}{preferred}")
+            else:
+                lines.append(f"  - (masked), {country}{preferred}")
+    else:
+        lines.append("  (no addresses found)")
+
+    if show_raw:
+        lines.append("")
+        lines.append("-" * 60)
+        lines.append("Full JSON Response:")
+        lines.append("-" * 60)
+        lines.append(json.dumps(user_data, indent=2, ensure_ascii=False))
+
+    return "\n".join(lines)
 
 
 def main():
@@ -21,6 +105,8 @@ def main():
     parser.add_argument("--user-id", default="027393602", help="User ID to retrieve")
     parser.add_argument("--environment", "-e", choices=["SANDBOX", "PRODUCTION"],
                         default="SANDBOX", help="Alma environment")
+    parser.add_argument("--show-raw", action="store_true",
+                        help="Print full unmasked record incl. raw JSON (PII!)")
     args = parser.parse_args()
 
     print("=" * 60)
@@ -30,81 +116,21 @@ def main():
     print(f"User ID: {args.user_id}")
     print("=" * 60)
 
-    # Initialize client and domain
     client = AlmaAPIClient(args.environment)
     users = Users(client)
 
     print("\nRetrieving user data...")
-
     try:
         response = users.get_user(args.user_id)
         user_data = response.data
-
         print("\n" + "=" * 60)
         print("USER DATA RETRIEVED SUCCESSFULLY")
-        print("=" * 60)
-
-        # Display key fields
-        print(f"\nPrimary ID:    {user_data.get('primary_id', 'N/A')}")
-        print(f"First Name:    {user_data.get('first_name', 'N/A')}")
-        print(f"Last Name:     {user_data.get('last_name', 'N/A')}")
-        print(f"Full Name:     {user_data.get('full_name', 'N/A')}")
-        print(f"User Group:    {user_data.get('user_group', {}).get('desc', 'N/A')}")
-        print(f"Status:        {user_data.get('status', {}).get('desc', 'N/A')}")
-        print(f"Account Type:  {user_data.get('account_type', {}).get('desc', 'N/A')}")
-
-        # Expiry date
-        expiry_date = user_data.get('expiry_date', 'N/A')
-        print(f"Expiry Date:   {expiry_date}")
-
-        # Email addresses
-        print("\nEmail Addresses:")
-        contact_info = user_data.get('contact_info', {})
-        emails = contact_info.get('email', [])
-        if emails:
-            for email in emails:
-                preferred = " (preferred)" if email.get('preferred') else ""
-                email_type = email.get('email_type', [{}])
-                if isinstance(email_type, list):
-                    type_desc = email_type[0].get('desc', 'N/A') if email_type else 'N/A'
-                else:
-                    type_desc = email_type.get('desc', 'N/A')
-                print(f"  - {email.get('email_address', 'N/A')} [{type_desc}]{preferred}")
-        else:
-            print("  (no emails found)")
-
-        # Phone numbers
-        print("\nPhone Numbers:")
-        phones = contact_info.get('phone', [])
-        if phones:
-            for phone in phones:
-                preferred = " (preferred)" if phone.get('preferred') else ""
-                print(f"  - {phone.get('phone_number', 'N/A')}{preferred}")
-        else:
-            print("  (no phones found)")
-
-        # Addresses
-        print("\nAddresses:")
-        addresses = contact_info.get('address', [])
-        if addresses:
-            for addr in addresses:
-                preferred = " (preferred)" if addr.get('preferred') else ""
-                city = addr.get('city', '')
-                country = addr.get('country', {}).get('desc', '')
-                print(f"  - {city}, {country}{preferred}")
-        else:
-            print("  (no addresses found)")
-
-        # Full JSON (optional - commented out to reduce output)
-        print("\n" + "-" * 60)
-        print("Full JSON Response:")
-        print("-" * 60)
-        print(json.dumps(user_data, indent=2, ensure_ascii=False))
-
+        print("=" * 60 + "\n")
+        print(format_user_report(user_data, show_raw=args.show_raw))
+        if not args.show_raw:
+            print("\n(contact fields masked; pass --show-raw to print the full record)")
     except Exception as e:
         print(f"\nERROR: {e}")
-        import traceback
-        traceback.print_exc()
         return 1
 
     return 0
