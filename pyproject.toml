@@ -30,7 +30,13 @@ testpaths = ["tests"]
 # mistaken for fixtures, and collecting them would risk firing real API calls.
 # They remain runnable by hand: `poetry run python tests/<script>.py ...`.
 # The opt-in live SANDBOX smoke is tests/test_live_smoke.py (RUN_LIVE_SMOKE=1).
-addopts = "--ignore=tests/test_citation_metadata.py --ignore=tests/test_resource_sharing_lending.py"
+#
+# --basetemp: redirect pytest's tmp_path base into a repo-local, user-owned
+# dir. The prod box (masedet) has a locked-down %TEMP%\pytest-of-<user> base
+# (owned by another account -> WinError 5 Access denied) that kills every
+# tmp_path test before it starts. A repo-local basetemp sidesteps it. The dir
+# is wiped at the start of each run, so keep it dedicated (it is gitignored).
+addopts = "--ignore=tests/test_citation_metadata.py --ignore=tests/test_resource_sharing_lending.py --basetemp=.pytest_tmp"
 
 [build-system]
 requires = ["poetry-core"]
