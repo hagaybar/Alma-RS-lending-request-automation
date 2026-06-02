@@ -1,0 +1,12 @@
+{
+  "_comment": "Template for the L3 live SANDBOX smoke. Copy to tests/live_smoke_data.json (gitignored) and fill REAL SANDBOX values. NEVER commit the filled file. SANDBOX only — the smoke hard-refuses PRODUCTION.",
+  "partner_code": "<SANDBOX_PARTNER_CODE>",
+  "owner": "<RESOURCE_SHARING_LIBRARY_CODE>",
+  "format_type": "DIGITAL",
+  "identifier": "<PMID_6_TO_9_DIGITS_OR_DOI_10.x/...>",
+  "user_id": "",
+  "user_name": "",
+  "is_faculty": "",
+  "notes": "L3 live smoke — disposable SANDBOX request, safe to ignore/delete",
+  "order_number": ""
+}

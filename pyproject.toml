@@ -9,11 +9,28 @@ package-mode = false
 [tool.poetry.dependencies]
 python = "^3.12"
 # AlmaAPITK package from PyPI (https://pypi.org/project/almaapitk/)
-# Floor is 0.4.5: credential-leak fix in the toolkit's logging path (issue #3).
-almaapitk = ">=0.4.5"
+# Floor is 0.4.6: 0.4.5 -> 0.4.6 verified SAFE for this repo (see
+# docs/almaapitk-audit.md). 0.4.6 removes POST from auto-retried verbs
+# (issue #166) — safer for this *create* job — and turns request/response body
+# logging off by default (issue #142). The resource_sharing.py write path is
+# byte-identical across the bump.
+# Raise to >=0.4.7 once published: it adds a test-harness PROD-write lock
+# (runtime-neutral for this consumer; see audit §F). 0.4.7 not on PyPI yet.
+almaapitk = ">=0.4.6"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0"
+
+[tool.pytest.ini_options]
+# Offline gate: collect only the tests/ dir, deterministically, on any box.
+testpaths = ["tests"]
+# test_citation_metadata.py and test_resource_sharing_lending.py are live,
+# manually-run demo/diagnostic scripts (argparse + main(), real Alma/PubMed/
+# Crossref calls). They are NOT offline tests — their test_*(arg) signatures are
+# mistaken for fixtures, and collecting them would risk firing real API calls.
+# They remain runnable by hand: `poetry run python tests/<script>.py ...`.
+# The opt-in live SANDBOX smoke is tests/test_live_smoke.py (RUN_LIVE_SMOKE=1).
+addopts = "--ignore=tests/test_citation_metadata.py --ignore=tests/test_resource_sharing_lending.py"
 
 [build-system]
 requires = ["poetry-core"]

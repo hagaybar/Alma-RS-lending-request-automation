@@ -1,0 +1,56 @@
+{
+  "pmid_academic_staff": {
+    "partner_code": "ANC",
+    "external_id": "FORMS-ANC-<TS>",
+    "owner": "AM1",
+    "format_type": "DIGITAL",
+    "source_type": "pmid",
+    "pmid": "33219451",
+    "note": "Jane Researcher, Academic staff, 0273601"
+  },
+  "doi_non_academic": {
+    "partner_code": "RELAIS",
+    "external_id": "FORMS-RELAIS-<TS>",
+    "owner": "AM1",
+    "format_type": "DIGITAL",
+    "source_type": "doi",
+    "doi": "10.1038/s41591-020-1124-9",
+    "note": "User Bob Student (0271111) is not Academic staff (actual: Undergraduate)"
+  },
+  "pmid_user_not_found": {
+    "partner_code": "ANC",
+    "external_id": "FORMS-ANC-<TS>",
+    "owner": "AM1",
+    "format_type": "DIGITAL",
+    "source_type": "pmid",
+    "pmid": "12345678",
+    "note": "User id: 0279999 not found in Alma, Bob Notfound, yes"
+  },
+  "doi_no_user_id": {
+    "partner_code": "RELAIS",
+    "external_id": "FORMS-RELAIS-<TS>",
+    "owner": "AM1",
+    "format_type": "DIGITAL",
+    "source_type": "doi",
+    "doi": "10.1000/xyz123",
+    "note": "Anon Requester, no"
+  },
+  "pmid_order_and_notes": {
+    "partner_code": "ANC",
+    "external_id": "FORMS-ANC-<TS>-PO1001",
+    "owner": "AM1",
+    "format_type": "DIGITAL",
+    "source_type": "pmid",
+    "pmid": "33219451",
+    "note": "Jane Researcher, Academic staff, 0273601 ; please rush ; PO1001"
+  },
+  "doi_prefixed_passthrough": {
+    "partner_code": "ANC",
+    "external_id": "FORMS-ANC-<TS>",
+    "owner": "AM1",
+    "format_type": "DIGITAL",
+    "source_type": "doi",
+    "doi": "https://doi.org/10.1038/s41591-020-1124-9",
+    "note": "Anon Requester, no"
+  }
+}

@@ -59,6 +59,11 @@ Thumbs.db
 .coverage
 htmlcov/
 
+# Live-smoke test data (real SANDBOX partner/owner/identifier values; never commit).
+# Only the placeholder template stays tracked.
+tests/live_smoke_data.json
+!tests/live_smoke_data.example.json
+
 # Babysitter SDK
 .a5c/node_modules/
 

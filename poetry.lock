@@ -2,18 +2,21 @@
 
 [[package]]
 name = "almaapitk"
-version = "0.4.5"
+version = "0.4.6"
 description = "Python toolkit for the Ex Libris Alma ILS API"
 optional = false
 python-versions = ">=3.12"
 groups = ["main"]
 files = [
-    {file = "almaapitk-0.4.5-py3-none-any.whl", hash = "sha256:175e0d21395346c84105b0151f10b5cee5c8ac31ec928b80995966172fd75ad4"},
-    {file = "almaapitk-0.4.5.tar.gz", hash = "sha256:3855af74d97ba2548189403f1d3ed06321ad525238e85517f4bd301ec19e3db2"},
+    {file = "almaapitk-0.4.6-py3-none-any.whl", hash = "sha256:a41dc2466ebec8d0a4bf52aeb5854aeb1bde184025acb7ef8e2c717ff0e53551"},
+    {file = "almaapitk-0.4.6.tar.gz", hash = "sha256:b4e2d1589ca9cf37b22dc9e45b5e1ff0b9e9f3f73eddf012cf89f7bddf954e3d"},
 ]
 
 [package.dependencies]
 requests = ">=2.32.0,<3.0.0"
+
+[package.extras]
+smoke = ["pytest (>=8.0.0,<9.0.0)"]
 
 [[package]]
 name = "certifi"
@@ -298,4 +301,4 @@ zstd = ["backports-zstd (>=1.0.0) ; python_version < \"3.14\""]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12"
-content-hash = "640cbb0838dcc9a531dfc7af81a9633fdbc0f06c8c0efe5d62ac59ef0ef94427"
+content-hash = "b7a22a6dcba6115c21cd082b2bc27d196767cdf3b49a6d01672bd6280fe3307f"
