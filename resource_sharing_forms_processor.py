@@ -568,7 +568,18 @@ class ResourceSharingFormsProcessor:
 
     def move_to_processed(self, file_path: Path) -> None:
         """
-        Move file to processed folder with timestamp prefix.
+        Move a completed file to the processed folder under its original name.
+
+        The file keeps the exact name it had in the input folder so downstream
+        automation (Power Automate) can verify processing by searching for the
+        same filename in the processed folder.
+
+        A name collision is rare and only arises from a legitimate edge process
+        (e.g. a file manually re-dropped from processed/ back into input/). When
+        the target name already exists, the existing file is preserved, the
+        incoming file is saved under a numeric suffix ("name (1).ext"), and the
+        collision is logged as an error. Resolving to a free name *before* the
+        move guarantees rename() never raises on an existing target.
 
         Args:
             file_path: Path to file to move
@@ -576,10 +587,16 @@ class ResourceSharingFormsProcessor:
         # Ensure processed folder exists
         self.processed_folder.mkdir(parents=True, exist_ok=True)
 
-        # Generate new filename with timestamp
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        new_name = f"{timestamp}_{file_path.name}"
-        new_path = self.processed_folder / new_name
+        new_path = self.processed_folder / file_path.name
+
+        # Preserve the existing file and suffix the incoming one on collision.
+        if new_path.exists():
+            free_path = self._next_available_path(new_path)
+            self.logger.error(
+                f"Processed file already exists: {new_path.name} — "
+                f"saving incoming file as {free_path.name} instead"
+            )
+            new_path = free_path
 
         # Move file
         file_path.rename(new_path)
@@ -588,6 +605,16 @@ class ResourceSharingFormsProcessor:
             self.logger.info(f"✓ Moved {file_path.name} → {relative_path}")
         except ValueError:
             self.logger.info(f"✓ Moved {file_path.name} → {new_path}")
+
+    @staticmethod
+    def _next_available_path(path: Path) -> Path:
+        """Return the first non-existing "stem (N).suffix" variant of *path*."""
+        counter = 1
+        while True:
+            candidate = path.with_name(f"{path.stem} ({counter}){path.suffix}")
+            if not candidate.exists():
+                return candidate
+            counter += 1
 
     def create_lending_request_from_form(self, form_data: Dict[str, Any]) -> Dict[str, Any]:
         """

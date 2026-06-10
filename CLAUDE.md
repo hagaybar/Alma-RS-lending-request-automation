@@ -30,7 +30,7 @@ poetry run python resource_sharing_forms_processor.py --config config/rs_forms_c
 - `config/` — JSON config files (example checked in, prod/sandbox gitignored)
 - `batch/` — Windows batch files for launching
 - `input/` — Watched folder for incoming TSV files from Power Automate
-- `processed/` — Completed files moved here with timestamp prefix
+- `processed/` — Completed files moved here under their original input filename (numeric suffix `name (1).ext` only on a name collision)
 - `output/logs/` — Processor and heartbeat logs
 - `output/reports/` — CSV processing reports
 
@@ -40,7 +40,7 @@ poetry run python resource_sharing_forms_processor.py --config config/rs_forms_c
 - **Single file architecture**: All processor logic in one file (~1100 lines)
 - **Identifier auto-detection**: PMID (6-9 digits) vs DOI (starts with 10.) — ignores user-provided type
 - **Error isolation**: One file's error never stops the batch; errors logged, processing continues
-- **File-as-state**: Files in `input/` = pending, files in `processed/` = done (timestamp-prefixed)
+- **File-as-state**: Files in `input/` = pending, files in `processed/` = done (kept under the original input filename so downstream automation can verify processing by matching the same name)
 
 ## Environment
 
