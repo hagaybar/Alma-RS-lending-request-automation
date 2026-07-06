@@ -302,6 +302,27 @@ class ResourceSharingFormsProcessor:
 
         return heartbeat_logger
 
+    def _normalize_identifier(self, identifier: str) -> str:
+        """
+        Strip a leading PMID prefix from the identifier value.
+
+        Some Microsoft Forms submissions arrive with the identifier already
+        labelled, e.g. ``PMID: 15320862`` (colon and/or space), which otherwise
+        fails auto-detection because it is not a bare 6-9 digit number. This is
+        the PMID counterpart to the DOI prefixes stripped in
+        ``detect_identifier_type``. DOI values (no ``pmid`` prefix) pass through
+        unchanged; DOI prefixes continue to be handled by detection/validation.
+
+        Args:
+            identifier: Raw identifier value from the form
+
+        Returns:
+            The identifier with any leading ``PMID:``/``PMID `` prefix removed
+        """
+        if not identifier:
+            return identifier
+        return re.sub(r'^\s*pmid\b[:\s]*', '', identifier, flags=re.IGNORECASE).strip()
+
     def detect_identifier_type(self, identifier: str) -> Optional[str]:
         """
         Auto-detect identifier type from value (PMID or DOI).
@@ -633,7 +654,9 @@ class ResourceSharingFormsProcessor:
         """
         # Extract fields
         partner_code = form_data['partner_code']
-        identifier = form_data['identifier']
+        # Strip any leading "PMID:" prefix the form may include so the cleaned
+        # value flows into detection, validation, and the downstream lookup.
+        identifier = self._normalize_identifier(form_data['identifier'])
 
         # Auto-detect identifier type
         detected_type = self.detect_identifier_type(identifier)
