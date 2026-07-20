@@ -73,7 +73,9 @@ The repo pins `almaapitk = ">=0.4.6"`. The user resource-sharing methods post-da
 """Guard: the pinned almaapitk must expose the borrowing create surface."""
 import inspect
 
-from almaapitk.domains.users import Users
+# Import from the top-level surface — the package declares it "the ONLY
+# supported public API"; internal module paths may move without notice (GH #34).
+from almaapitk import Users
 
 
 def test_users_exposes_create_user_rs_request():
@@ -138,6 +140,7 @@ A characterization test that records exactly what the lending path builds today.
 
 **Files:**
 - Test: `tests/test_lending_characterization.py` (create)
+- Create: `tests/borrowing_fixtures.py` (shared fixtures for the whole feature branch — GH #22)
 - Read: `resource_sharing_forms_processor.py:619-786` (`create_lending_request_from_form`)
 
 **Interfaces:**
@@ -145,6 +148,26 @@ A characterization test that records exactly what the lending path builds today.
 - Produces: a frozen record of the lending `params` dict, reused unchanged in Task 2
 
 - [ ] **Step 1: Write the failing test**
+
+First create `tests/borrowing_fixtures.py` — the shared fixture module every
+test file in this feature imports from, so no test closes over another test
+module's globals (GH #22, GH #12):
+
+```python
+"""Shared fixtures for the borrowing-requests feature branch (GH #22)."""
+
+CONFIG = {
+    "alma_settings": {"environment": "SANDBOX", "owner": "AM1", "format_type": "DIGITAL"},
+    "file_processing": {"input_folder": "./input", "processed_folder": "./processed",
+                        "output_dir": "./output"},
+    "watch_mode": {"poll_interval": 60},
+    "processing_options": {"skip_invalid_identifiers": True,
+                           "continue_on_metadata_failure": True,
+                           "continue_on_api_error": True},
+}
+```
+
+Then `tests/test_lending_characterization.py`:
 
 ```python
 """Characterization: freeze what the lending path builds today.
@@ -158,16 +181,7 @@ from pathlib import Path
 import pytest
 
 from resource_sharing_forms_processor import ResourceSharingFormsProcessor
-
-CONFIG = {
-    "alma_settings": {"environment": "SANDBOX", "owner": "AM1", "format_type": "DIGITAL"},
-    "file_processing": {"input_folder": "./input", "processed_folder": "./processed",
-                        "output_dir": "./output"},
-    "watch_mode": {"poll_interval": 60},
-    "processing_options": {"skip_invalid_identifiers": True,
-                           "continue_on_metadata_failure": True,
-                           "continue_on_api_error": True},
-}
+from tests.borrowing_fixtures import CONFIG
 
 FORM = {
     "filename": "sample", "filepath": Path("sample.tsv"),
@@ -183,6 +197,9 @@ def test_lending_params_are_unchanged(tmp_path):
 
     assert result["status"] == "dry_run_success"
     assert result["detected_type"] == "pmid"
+    # Pins the CSV Title column through the refactor (GH #26) — the dry-run
+    # placeholder must survive the move into rs_requests/ byte for byte.
+    assert result["title"] == "[DRY-RUN - Not fetched]"
     # external_id embeds a timestamp; assert its shape, not its value
     assert result["external_id"].startswith("FORMS-SHEB-")
     assert result["external_id"].endswith("-Order_Num_24586")
@@ -197,7 +214,7 @@ Expected: PASS. If it fails, **stop** — the assumption about current behaviour
 - [ ] **Step 3: Commit**
 
 ```bash
-git add tests/test_lending_characterization.py
+git add tests/test_lending_characterization.py tests/borrowing_fixtures.py
 git commit -m "test: characterize lending request building before refactor"
 ```
 
@@ -331,7 +348,10 @@ def get_builder(kind: str, *, processor: Any) -> RequestBuilder:
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `poetry run pytest tests/test_builder_dispatch.py -v`
-Expected: the first two tests still FAIL (`rs_requests.lending` missing), the third PASSES.
+Expected: only `test_get_builder_returns_lending` still FAILS (its lazy
+import of `rs_requests.lending` is unresolved); the other two PASS —
+`get_builder` raises `ValueError` for an unknown kind before any import, and
+the dataclass test needs no builder at all (GH #24).
 
 - [ ] **Step 5: Move lending into the builder**
 
@@ -450,15 +470,30 @@ and add the generic entry point:
         builder = get_builder(kind, processor=self)
         metadata = None
         if builder.needs_metadata:
-            from rs_requests.metadata import fetch_citation_metadata
-            metadata = fetch_citation_metadata(
-                form_data["identifier"],
-                self.detect_identifier_type(form_data["identifier"]),
-            )
+            # Stamped onto form_data so summaries/reports can show the
+            # detected type (GH #28).
+            form_data["identifier_type"] = self.detect_identifier_type(
+                form_data["identifier"])
+            if self.dry_run:
+                # Dry-run makes NO network calls — the project invariant the
+                # lending path already honours (GH #20). Build against
+                # placeholder metadata; the payload structure stays
+                # inspectable for matrix T-10.
+                from rs_requests.metadata import DRY_RUN_METADATA
+                metadata = dict(DRY_RUN_METADATA)
+            else:
+                from rs_requests.metadata import fetch_citation_metadata
+                metadata = fetch_citation_metadata(
+                    form_data["identifier"], form_data["identifier_type"])
         built = builder.build(form_data, metadata)
         if self.dry_run:
             self.logger.info(f"[DRY-RUN] Would create {kind} request")
             self.logger.info(f"  External ID: {built.external_id}")
+            # Full body to the file log only: lcc_number may carry a patron
+            # name (GH #20 — this is also what matrix T-10 inspects).
+            self._log_pii(logging.DEBUG,
+                          f"  Payload: {built.payload}",
+                          "  Payload: (recorded — see file log)")
             return {"status": "dry_run_success", "external_id": built.external_id,
                     **built.summary}
         return builder.submit(built)
@@ -494,36 +529,53 @@ git commit -m "refactor: extract request building behind a RequestBuilder interf
 - [ ] **Step 1: Write the failing test**
 
 ```python
+from resource_sharing_forms_processor import ResourceSharingFormsProcessor
+from tests.borrowing_fixtures import CONFIG
+
+
+def _folders_cfg(tmp_path, lend, borrow=None, enabled=True):
+    cfg = dict(CONFIG)
+    cfg["file_processing"] = {
+        "input_folder": str(lend),
+        "processed_folder": str(tmp_path / "processed"),
+        "output_dir": str(tmp_path / "output"),
+    }
+    if borrow is not None:
+        cfg["file_processing"]["borrowing_input_folder"] = str(borrow)
+    cfg["borrowing"] = {**cfg.get("borrowing", {}), "enabled": enabled}
+    return cfg
+
+
 def test_find_pending_files_tags_each_folder(tmp_path):
     lend = tmp_path / "input"; lend.mkdir()
     borrow = tmp_path / "input_borrowing"; borrow.mkdir()
     (lend / "a.tsv").write_text("x")
     (borrow / "b.tsv").write_text("y")
 
-    cfg = dict(CONFIG)
-    cfg["file_processing"] = {
-        "input_folder": str(lend),
-        "borrowing_input_folder": str(borrow),
-        "processed_folder": str(tmp_path / "processed"),
-        "output_dir": str(tmp_path / "output"),
-    }
-    proc = ResourceSharingFormsProcessor(cfg, dry_run=True)
+    proc = ResourceSharingFormsProcessor(
+        _folders_cfg(tmp_path, lend, borrow), dry_run=True)
 
     found = dict((p.name, kind) for p, kind in proc.find_pending_files())
     assert found == {"a.tsv": "lending", "b.tsv": "borrowing"}
+
+
+def test_disabled_borrowing_folder_is_not_scanned(tmp_path):
+    """GH #29: parked files in a disabled folder must not generate a warning
+    plus a report row every minute — they are excluded at scan time."""
+    lend = tmp_path / "input"; lend.mkdir()
+    borrow = tmp_path / "input_borrowing"; borrow.mkdir()
+    (borrow / "b.tsv").write_text("y")
+    proc = ResourceSharingFormsProcessor(
+        _folders_cfg(tmp_path, lend, borrow, enabled=False), dry_run=True)
+    assert [k for _, k in proc.find_pending_files()] == []
 
 
 def test_borrowing_folder_is_optional(tmp_path):
     """A config without a borrowing folder must behave exactly as today."""
     lend = tmp_path / "input"; lend.mkdir()
     (lend / "a.tsv").write_text("x")
-    cfg = dict(CONFIG)
-    cfg["file_processing"] = {
-        "input_folder": str(lend),
-        "processed_folder": str(tmp_path / "processed"),
-        "output_dir": str(tmp_path / "output"),
-    }
-    proc = ResourceSharingFormsProcessor(cfg, dry_run=True)
+    proc = ResourceSharingFormsProcessor(
+        _folders_cfg(tmp_path, lend), dry_run=True)
     assert [k for _, k in proc.find_pending_files()] == ["lending"]
 ```
 
@@ -553,7 +605,11 @@ Add alongside `find_pending_tsv_files` (keep that method — it is still used by
         pending: List[Tuple[Path, str]] = [
             (p, 'lending') for p in self.find_pending_tsv_files()
         ]
-        if self.borrowing_input_folder:
+        # Disabled borrowing (the shipped default) is excluded at scan time:
+        # parked files must not churn a warning + log + report row per minute
+        # (GH #29). The per-file guard in process_tsv_file remains as
+        # second-line defence for files already routed when config flips.
+        if self.borrowing_input_folder and self.borrowing_config.get('enabled', False):
             if not self.borrowing_input_folder.exists():
                 self.logger.warning(
                     f"Borrowing input folder does not exist: {self.borrowing_input_folder}"
@@ -572,9 +628,32 @@ Add alongside `find_pending_tsv_files` (keep that method — it is still used by
         return pending
 ```
 
-Add `Tuple` to the `typing` import line. Then change `process_single_run` and
-`process_watch_mode` to iterate `self.find_pending_files()` and pass `kind`
-through to `process_tsv_file(file_path, kind)`.
+Add `Tuple` to the `typing` import line. Also add the `kind` parameter to
+`process_tsv_file` **now**, as accepted-but-ignored
+(`def process_tsv_file(self, file_path: Path, kind: str = 'lending') -> Dict[str, Any]:`
+with no other change until Task 6) — otherwise the loops below would call it
+with an argument that does not exist yet, leaving Tasks 3-5's commits
+runtime-broken (GH #21).
+
+Then change `process_single_run` to iterate the tagged scan:
+
+```python
+        for file_path, kind in self.find_pending_files():
+            self.process_tsv_file(file_path, kind)
+```
+
+In `process_watch_mode`, the in-memory dedup set keys on bare `f.name` today;
+a lending file and a borrowing file may legitimately share a filename (both
+come from Power Automate), so key it on the kind as well (GH #30):
+
+```python
+            for file_path, kind in self.find_pending_files():
+                token = f"{kind}:{file_path.name}"
+                if token in self.processed_files:
+                    continue
+                self.process_tsv_file(file_path, kind)
+                self.processed_files.add(token)
+```
 
 - [ ] **Step 4: Run to verify it passes**
 
@@ -619,13 +698,15 @@ Create the watched folder so a fresh clone works:
 
 ```bash
 mkdir -p input_borrowing && touch input_borrowing/.gitkeep
+# User data must never be committable (GH #23) — mirror the input/ rule:
+echo 'input_borrowing/*.tsv' >> .gitignore
 ```
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add resource_sharing_forms_processor.py config/rs_forms_config.example.json \
-        tests/test_builder_dispatch.py input_borrowing/.gitkeep
+        tests/test_builder_dispatch.py input_borrowing/.gitkeep .gitignore
 git commit -m "feat: route a second input folder to the borrowing builder"
 ```
 
@@ -655,6 +736,9 @@ import pytest
 from resource_sharing_forms_processor import (
     ResourceSharingFormsProcessor, FileProcessingError,
 )
+
+
+from tests.borrowing_fixtures import CONFIG
 
 
 def _proc(tmp_path, columns=None):
@@ -736,6 +820,10 @@ Add the method next to `read_tsv_file`:
 ```python
     #: Only `requestor` and `identifier` are settled with the Power Automate
     #: side. Everything else is optional and defaults to empty.
+    #: 'patron_name' is deliberately absent (GH #17): once the librarians
+    #: answer the lcc_number question (guidebook §4.5), adding
+    #: {"patron_name": <idx>} to config['borrowing']['columns'] activates it
+    #: end-to-end — a config edit, not a code change.
     DEFAULT_BORROWING_COLUMNS = {
         'requestor': 0, 'identifier': 1, 'notes': 2,
         'material_type': 3, 'order_number': 4,
@@ -779,6 +867,9 @@ Add the method next to `read_tsv_file`:
             'notes': cell('notes'),
             'material_type': cell('material_type').upper(),
             'order_number': cell('order_number'),
+            # Unmapped by default (no index in DEFAULT_BORROWING_COLUMNS), so
+            # this is '' until config maps it — see the columns note (GH #17).
+            'patron_name': cell('patron_name'),
         }
 
         allowed = self.borrowing_config.get('allowed_hospitals') or []
@@ -808,7 +899,7 @@ Add to the example config's `borrowing` block:
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `poetry run pytest tests/test_borrowing_tsv.py -q`
-Expected: PASS (6 tests)
+Expected: PASS (5 tests)
 
 - [ ] **Step 5: Commit**
 
@@ -836,13 +927,12 @@ The core of the work. Every value traces to `docs/BORROWING_REQUESTS.md` §4.
 
 - [ ] **Step 1: Write the failing test**
 
-First create `tests/borrowing_fixtures.py` — a plain importable module
-(`tests/` is already a package with `__init__.py`). Task 6's test file needs
-the same canonical metadata; defining it once here prevents the cross-file
-`NameError` of GH issue #12:
+First extend `tests/borrowing_fixtures.py` (created in Task 1 — GH #22) with
+the canonical borrowing metadata; defining it once prevents the cross-file
+`NameError` of GH issue #12. Append:
 
 ```python
-"""Canonical borrowing-test fixtures, shared across test files (GH #12)."""
+# --- canonical borrowing metadata (GH #12) ---------------------------------
 
 META = {
     "title": "A distinctive article title", "author": "Testerson, A.",
@@ -923,6 +1013,9 @@ def test_material_type_bk_selects_book_and_stays_digital():
     p = _build(form={"material_type": "BK"}).payload
     assert p["citation_type"] == {"value": "BK"}
     assert p["format"] == {"value": "DIGITAL"}   # books are scanned, not loaned
+    # GH #18: for a chapter DOI, Crossref's container-title is the BOOK —
+    # a book request must not carry it as journal_title.
+    assert "journal_title" not in p
 
 
 def test_rejects_electronic_citation_codes():
@@ -1076,8 +1169,21 @@ from almaapitk.utils.citation_metadata import (
     CitationMetadataError, get_crossref_metadata, get_pubmed_metadata,
 )
 
+# isbn is NOT in FIELDS: neither toolkit helper extracts it (verified against
+# 0.4.6 — GH #18); a name that can only ever be empty must not pretend to be
+# part of the normalised shape.
 FIELDS = ("title", "author", "journal", "year", "volume", "issue", "pages",
-          "start_page", "end_page", "issn", "isbn", "doi", "pmid", "publisher")
+          "start_page", "end_page", "issn", "doi", "pmid", "publisher")
+
+#: Placeholder metadata used when building in dry-run: no network calls
+#: happen (GH #20), but the payload keeps a valid, inspectable structure.
+#: Mirrors the lending path's '[DRY-RUN - Not fetched]' convention.
+DRY_RUN_METADATA = {
+    "title": "[DRY-RUN - Not fetched]",
+    "author": "[DRY-RUN]",
+    "journal": "[DRY-RUN]",
+    "year": "[DRY-RUN]",
+}
 
 
 def fetch_citation_metadata(identifier: str, id_type: str) -> Dict[str, str]:
@@ -1172,9 +1278,10 @@ class BorrowingRequestBuilder(RequestBuilder):
         # Stable across retries (GH #13): the token is the input file's mtime
         # (stamped by the reader), and the sanitized stem is unique among
         # concurrently pending files (a directory cannot hold two files with
-        # one name). Same file → same id on every retry, so a re-run
-        # reconciles instead of duplicating; two same-second files can no
-        # longer collide either, because their stems differ (GH #15).
+        # one name). Same file → same id in every log line and report row, so
+        # a retry is traceable to its earlier attempts. Alma does NOT store
+        # this id (GH #14) — duplicate safety is Alma's 402362 rejection, see
+        # submit().
         token = (form_data.get("file_token") or "").strip()
         if not token:
             raise BorrowingValidationError(
@@ -1204,13 +1311,21 @@ class BorrowingRequestBuilder(RequestBuilder):
         }
 
         # --- bibliographic fields: included only when non-empty ----------
+        # isbn is not mapped: neither toolkit helper can produce it (GH #18);
+        # reinstate only after almaapitk grows ISBN extraction.
         for key, source in (("author", "author"), ("year", "year"),
                             ("journal_title", "journal"), ("volume", "volume"),
                             ("issue", "issue"), ("pages", "pages"),
                             ("start_page", "start_page"), ("end_page", "end_page"),
-                            ("issn", "issn"), ("isbn", "isbn"),
+                            ("issn", "issn"),
                             ("doi", "doi"), ("pmid", "pmid"),
                             ("publisher", "publisher")):
+            if key == "journal_title" and citation_type == "BK":
+                # A book request has no journal — for a chapter DOI Crossref's
+                # container-title is the BOOK title and must not be sent as
+                # journal_title (GH #18). Chapter-level fields (chapter_title,
+                # chapter_author) are a documented gap pending matrix T-03.
+                continue
             value = (meta.get(source) or "").strip()
             if value:
                 payload[key] = value
@@ -1349,15 +1464,10 @@ git commit -m "feat: build borrowing request payloads from the verified field te
 - [ ] **Step 1: Write the failing test**
 
 ```python
-from tests.borrowing_fixtures import META
-
-
-def test_end_to_end_dry_run_builds_a_payload(tmp_path, monkeypatch):
-    """A borrowing file produces a payload without any network call."""
-    import rs_requests.metadata as md
-    monkeypatch.setattr(md, "fetch_citation_metadata",
-                        lambda ident, id_type: dict(META))
-
+def test_end_to_end_dry_run_builds_a_payload(tmp_path):
+    """A borrowing file produces a dry-run result with NO network call —
+    dry-run builds against placeholder metadata (GH #20), so nothing needs
+    monkeypatching."""
     f = tmp_path / "input_borrowing" / "r.tsv"
     f.parent.mkdir(parents=True, exist_ok=True)
     f.write_text("SHEB\t33219451\n", encoding="utf-8")
@@ -1367,6 +1477,7 @@ def test_end_to_end_dry_run_builds_a_payload(tmp_path, monkeypatch):
     assert result["status"] == "dry_run_success"
     assert result["kind"] == "borrowing"
     assert result["requestor"] == "SHEB"
+    assert result["detected_type"] == "pmid"     # stamped in the pipeline (GH #28)
 
 
 def test_disabled_borrowing_skips_the_file(tmp_path):
@@ -1382,11 +1493,15 @@ def test_disabled_borrowing_skips_the_file(tmp_path):
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `poetry run pytest tests/test_borrowing_tsv.py -v`
-Expected: FAIL — `process_tsv_file()` takes no `kind` argument
+Expected: FAIL — `kind` is accepted but ignored (a no-op since Task 3,
+GH #21), so the borrowing file is parsed by the *lending* reader: the result
+is `status='error'` with no `kind` key and the first assertion fails.
 
 - [ ] **Step 3: Implement**
 
-Change the signature to `def process_tsv_file(self, file_path: Path, kind: str = 'lending') -> Dict[str, Any]:` and at the top of the body — **before the `try`** (this check cannot raise, so it is safe outside error isolation):
+The signature already accepts `kind` (a no-op since Task 3 — GH #21); now
+honour it. At the top of the body — **before the `try`** (this check cannot
+raise, so it is safe outside error isolation):
 
 ```python
         if kind == 'borrowing' and not self.borrowing_config.get('enabled', False):
@@ -1511,6 +1626,14 @@ def test_mask_keeps_structure_drops_the_name():
     assert mask_lcc_number("SHEBA-TAU-1680 Some Patron") == "SHEBA-TAU-1680 ***"
 
 
+def test_mask_handles_this_repos_order_number_shapes():
+    """GH #16: order numbers here are 'Order_…', not digits — the mask must
+    still catch the name that follows them."""
+    assert mask_lcc_number("SHEB-TAU-Order_9 David Levi") == "SHEB-TAU-Order_9 ***"
+    assert (mask_lcc_number("SHEB-TAU-Order_Num_24586 Some Patron")
+            == "SHEB-TAU-Order_Num_24586 ***")
+
+
 def test_mask_leaves_nameless_conventions_intact():
     assert mask_lcc_number("BEIL248; 20233913") == "BEIL248; 20233913"
     assert mask_lcc_number("IC2055") == "IC2055"
@@ -1540,14 +1663,19 @@ def mask_lcc_number(value: Optional[str]) -> str:
     """
     if not value:
         return ""
-    match = re.match(r"^([A-Za-z]+-[A-Za-z]+-\d+)\s+\S.*$", value.strip())
+    # The prefix segment is NOT digits-only: this repo's order numbers look
+    # like 'Order_Num_24586' (GH #16), so the rendered template can be
+    # 'SHEB-TAU-Order_9 <patron name>'. Match any word-ish final segment.
+    match = re.match(r"^([A-Za-z]+-[A-Za-z]+-[A-Za-z0-9_]+)\s+\S.*$",
+                     value.strip())
     if match:
         return f"{match.group(1)} ***"
     return value.strip()
 ```
 
-Then in `BorrowingRequestBuilder.build`, replace the plain debug of the
-rendered template with:
+Then in `BorrowingRequestBuilder.build`, immediately after the `lcc_number`
+template is rendered into the payload, **add** this logging (there is no
+existing debug line to replace — GH #27):
 
 ```python
             self.processor._log_pii(

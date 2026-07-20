@@ -285,3 +285,22 @@ Fill in as tests are run. **A request created and not cancelled is a defect.**
 
 Outstanding from 2026-07-19 (created before this matrix existed, still not
 cleaned up): `39940155760004146`, `39940156450004146`, `39940157570004146`.
+
+### T-02b — Real-identifier augmentation diff (GH #33)
+
+**Settles:** what Alma's Augmentation Integration Profile overwrites when the
+identifiers are *real*. T-02 deliberately uses fake ids so augmentation stays
+silent — but production always sends real PMIDs/DOIs, so T-02's sent→stored
+verdicts are measured under different conditions than production runs in
+(AlmaAPITK borrowing guide: augmentation resolves a valid `pmid`/`doi` and
+overwrites "any corresponding manually provided metadata strings").
+
+**User:** `SHEB` · One T-02-shaped body but with a **real** PMID and its true
+metadata deliberately perturbed (e.g. wrong `year`, truncated `title`), then
+`GET` the created request and diff field-by-field:
+
+- Which sent values survived, which were overwritten by augmentation?
+- Record the overwritten set next to T-02's settability table — together they
+  are the full sent→stored contract for production.
+
+**Cleanup:** cancel, record in §4.
