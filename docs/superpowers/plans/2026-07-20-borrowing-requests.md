@@ -1589,6 +1589,22 @@ the file is done and must leave the input folder or it retries forever):
 `duplicate` rows appear in the CSV with an empty `Request_ID` — Alma's 402362
 rejection does not say which existing request matched.
 
+Finally, give the shared client the generous timeout the matrix mandates
+(GH #19) — a borrowing create can exceed the 60s default **and still save**,
+which is exactly the scenario the 402362 recovery exists for. At the client
+construction (`resource_sharing_forms_processor.py:163`):
+
+```python
+            self.client = AlmaAPIClient(
+                self.environment,
+                timeout=int(config.get('api_timeout_seconds', 180)),
+            )
+```
+
+and add `"api_timeout_seconds": 180` at the top level of
+`config/rs_forms_config.example.json`. The lending path shares this client;
+a longer ceiling is strictly safer for its creates too.
+
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `poetry run pytest -q`
