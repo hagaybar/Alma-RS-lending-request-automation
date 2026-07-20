@@ -324,12 +324,33 @@ Expected: the first two tests still FAIL (`rs_requests.lending` missing), the th
 
 - [ ] **Step 5: Move lending into the builder**
 
-Create `rs_requests/lending.py`. Move the body of
-`create_lending_request_from_form` (`resource_sharing_forms_processor.py:619-786`)
-into it **verbatim**, changing only `self.` → `self.processor.` for processor
-attributes (`logger`, `dry_run`, `owner`, `format_type`, `rs`,
-`detect_identifier_type`, `validate_identifier`, `_lookup_and_verify_user`,
-`_log_pii`):
+Create `rs_requests/lending.py`. The move is **behaviour-preserving, not
+literal** — the original function's body straddles the new `build`/`submit`
+boundary, so three build-scope locals must be reached through the
+`BuiltRequest` in `submit()`. The exact mapping (GH issue #11):
+
+| build-scope local | in `submit()` becomes |
+|---|---|
+| `params` | `built.payload` |
+| `external_id` | `built.external_id` |
+| `detected_type` | `built.summary['detected_type']` |
+
+**`build()`** gets the body of `create_lending_request_from_form`
+(`resource_sharing_forms_processor.py:634-750`) — everything from
+`# Extract fields` down to the note logging, i.e. everything **before** the
+`# Create request (or dry-run)` comment — changing only `self.` →
+`self.processor.` for processor attributes (`logger`, `dry_run`, `owner`,
+`format_type`, `rs`, `detect_identifier_type`, `validate_identifier`,
+`_lookup_and_verify_user`, `_log_pii`), then ends with the `return
+BuiltRequest(...)` shown below.
+
+**`submit()`** gets only the live branch (proc:753-773). The `if not
+self.dry_run:` guard is dropped — `create_request_from_form` already gates
+`submit()` on dry-run. The original dry-run return (proc:774-785) is **not**
+moved anywhere: the generic dry-run branch reproduces its result dict exactly
+via `**built.summary` (which is why `summary` below carries `title`). Its two
+extra log lines (`Type:`/`Identifier:`) are the only casualty — no test or CSV
+field reads them.
 
 ```python
 """Lending request builder — behaviour moved unchanged from the processor."""
@@ -342,6 +363,15 @@ from typing import Any, Dict, Optional
 from almaapitk import AlmaAPIError
 from almaapitk.utils.citation_metadata import CitationMetadataError
 
+# Cycle-safe: the processor never imports rs_requests at module level (every
+# get_builder import is deferred into a method body), so importing its
+# exception types here cannot create a circular import.
+from resource_sharing_forms_processor import (
+    IdentifierDetectionError,
+    LendingRequestError,
+    MetadataFetchError,
+)
+
 from rs_requests.base import BuiltRequest, RequestBuilder
 
 
@@ -351,16 +381,44 @@ class LendingRequestBuilder(RequestBuilder):
 
     def build(self, form_data: Dict[str, Any],
               metadata: Optional[Dict[str, Any]] = None) -> BuiltRequest:
-        # <<< the exact body of create_lending_request_from_form up to the
-        # "Create request (or dry-run)" comment, returning a BuiltRequest
-        # whose payload is the `params` dict and whose summary carries
-        # detected_type. Do not alter any logic while moving it. >>>
-        raise NotImplementedError("move the existing body here verbatim")
+        # <<< proc:634-750 moved here with the self. → self.processor.
+        # renames listed above. Do not alter any logic. Then: >>>
+        return BuiltRequest(
+            kind=self.kind,
+            external_id=external_id,
+            payload=params,
+            summary={
+                'detected_type': detected_type,
+                # Preserves the pre-refactor dry-run result dict (and the
+                # CSV Title column) byte for byte; the live path overrides
+                # this with the real title in submit()'s return.
+                'title': '[DRY-RUN - Not fetched]',
+            },
+        )
 
     def submit(self, built: BuiltRequest) -> Dict[str, Any]:
-        # <<< the existing `self.rs.create_lending_request_from_citation(**params)`
-        # call plus its three except clauses, unchanged. >>>
-        raise NotImplementedError("move the existing submit here verbatim")
+        # proc:753-773 with exactly the renames from the mapping table.
+        params = built.payload
+        try:
+            request = self.processor.rs.create_lending_request_from_citation(**params)
+
+            self.processor.logger.info(f"✓ Lending request created successfully")
+            self.processor.logger.info(f"  Request ID: {request['request_id']}")
+            self.processor.logger.info(f"  Title: {request.get('title', 'N/A')[:60]}")
+
+            return {
+                'status': 'success',
+                'request_id': request['request_id'],
+                'external_id': built.external_id,
+                'detected_type': built.summary['detected_type'],
+                'title': request.get('title', '')
+            }
+        except CitationMetadataError as e:
+            raise MetadataFetchError(f"Metadata fetch failed: {e}")
+        except AlmaAPIError as e:
+            raise LendingRequestError(f"API error: {e}")
+        except Exception as e:
+            raise LendingRequestError(f"Unexpected error: {e}")
 ```
 
 Then replace `create_lending_request_from_form` in the processor with:
@@ -700,6 +758,11 @@ Add the method next to `read_tsv_file`:
         data = {
             'filename': file_path.stem,
             'filepath': file_path,
+            # Stable across retries (GH #13): derived from the file's mtime,
+            # not wall-clock. Error files stay in place untouched, so every
+            # retry of the same file sees the same token.
+            'file_token': datetime.fromtimestamp(
+                file_path.stat().st_mtime).strftime('%d%m%Y%H%M%S'),
             'requestor': cell('requestor'),
             'identifier': cell('identifier'),
             'notes': cell('notes'),
@@ -762,12 +825,37 @@ The core of the work. Every value traces to `docs/BORROWING_REQUESTS.md` §4.
 
 - [ ] **Step 1: Write the failing test**
 
+First create `tests/borrowing_fixtures.py` — a plain importable module
+(`tests/` is already a package with `__init__.py`). Task 6's test file needs
+the same canonical metadata; defining it once here prevents the cross-file
+`NameError` of GH issue #12:
+
+```python
+"""Canonical borrowing-test fixtures, shared across test files (GH #12)."""
+
+META = {
+    "title": "A distinctive article title", "author": "Testerson, A.",
+    "journal": "Journal of Diagnostics", "year": "2024", "volume": "12",
+    "issue": "3", "pages": "101-115", "start_page": "101", "end_page": "115",
+    "issn": "0000-0000", "isbn": "", "doi": "10.9999/x", "pmid": "33219451",
+    "publisher": "Sandbox Press",
+}
+
+FORM = {"requestor": "SHEB", "identifier": "33219451", "notes": "",
+        "material_type": "", "order_number": "Order_9", "filename": "r",
+        "file_token": "20072026143205"}
+```
+
+Then `tests/test_borrowing_builder.py`:
+
 ```python
 import pytest
+import requests
 
 from almaapitk import AlmaAPIError
 
 from rs_requests.borrowing import BorrowingRequestBuilder, BorrowingValidationError
+from tests.borrowing_fixtures import FORM, META
 
 
 class FakeProcessor:
@@ -787,17 +875,6 @@ class FakeProcessor:
         @staticmethod
         def warning(*a, **k): pass
     def _log_pii(self, *a, **k): pass
-
-
-META = {
-    "title": "A distinctive article title", "author": "Testerson, A.",
-    "journal": "Journal of Diagnostics", "year": "2024", "volume": "12",
-    "issue": "3", "pages": "101-115", "start_page": "101", "end_page": "115",
-    "issn": "0000-0000", "isbn": "", "doi": "10.9999/x", "pmid": "33219451",
-    "publisher": "Sandbox Press",
-}
-FORM = {"requestor": "SHEB", "identifier": "33219451", "notes": "",
-        "material_type": "", "order_number": "Order_9", "filename": "r"}
 
 
 def _build(form=None, meta=None, config=None):
@@ -856,9 +933,10 @@ def test_omits_partner_mms_id_and_oclc_number():
 
 
 def test_external_id_is_stable_and_identifies_the_source():
-    built = _build()
-    assert built.external_id.startswith("FORMS-BR-SHEB-")
-    assert built.external_id.endswith("-Order_9")
+    """Same file → same id on every retry (GH #13); no wall-clock component."""
+    a = _build().external_id
+    b = _build().external_id
+    assert a == b == "FORMS-BR-SHEB-20072026143205-r-Order_9"
 
 
 def test_lcc_number_omitted_when_template_empty():
@@ -885,41 +963,81 @@ def test_empty_metadata_fields_are_omitted_not_sent_blank():
 # --- submit(): a failed create must never be blind-retried -------------------
 
 class _FakeUsers:
-    """Records calls so the test can assert no second create was attempted."""
+    """Scriptable Users stand-in.
 
-    def __init__(self, existing=None):
-        self.existing, self.creates, self.lookups = existing, 0, 0
+    lookup_results is consumed one entry per get_user_rs_request call: a dict
+    is returned, None raises not-found; when exhausted, not-found. create
+    always raises exc — these tests only exercise the failure paths.
+    """
+
+    def __init__(self, lookup_results=(), exc=None):
+        self.lookup_results = list(lookup_results)
+        self.creates, self.lookups = 0, 0
+        self.exc = exc if exc is not None else AlmaAPIError("HTTP 500")
 
     def create_user_rs_request(self, user_id, request_data, **kw):
         self.creates += 1
-        raise AlmaAPIError("timeout")
+        raise self.exc
 
     def get_user_rs_request(self, user_id, request_id, **kw):
         self.lookups += 1
-        if self.existing is None:
-            raise AlmaAPIError("not found")
-        return self.existing
+        if self.lookup_results:
+            hit = self.lookup_results.pop(0)
+            if hit is not None:
+                return hit
+        raise AlmaAPIError("not found")
+
+
+def test_previously_saved_create_is_found_before_posting():
+    """A retry of an already-saved create must never POST again (GH #13)."""
+    users = _FakeUsers(lookup_results=[{"request_id": "R77"}])
+    result = _builder_with(users).submit(_build())
+    assert result["status"] == "success"
+    assert result["request_id"] == "R77"
+    assert result["reconciled"] is True
+    assert users.creates == 0        # the whole point
 
 
 def test_failed_create_that_already_landed_is_reconciled_not_retried():
     """A timed-out POST that saved resolves to success via external_id."""
-    users = _FakeUsers(existing={"request_id": "R99"})
-    builder, built = _builder_with(users), _build()
-    result = builder.submit(built)
+    users = _FakeUsers(lookup_results=[None, {"request_id": "R99"}])
+    result = _builder_with(users).submit(_build())
     assert result["status"] == "success"
     assert result["request_id"] == "R99"
     assert result["reconciled"] is True
     assert users.creates == 1        # never retried
-    assert users.lookups == 1
+    assert users.lookups == 2        # pre-create probe + post-failure reconcile
 
 
 def test_failed_create_that_did_not_land_reraises():
     """If external_id is absent, the original error must propagate."""
-    users = _FakeUsers(existing=None)
-    builder = _builder_with(users)
+    users = _FakeUsers()
     with pytest.raises(AlmaAPIError):
-        builder.submit(_build())
+        _builder_with(users).submit(_build())
     assert users.creates == 1        # still never retried
+
+
+def test_client_side_timeout_is_reconciled_too():
+    """almaapitk 0.4.6 does not wrap transport errors in AlmaAPIError (GH #9).
+
+    A socket read-timeout on the POST surfaces as requests.ReadTimeout —
+    the exact 'timed out but saved' case — and must reach the reconcile
+    branch, not fall through to a blind retry next scheduled run.
+    """
+    users = _FakeUsers(lookup_results=[None, {"request_id": "R99"}],
+                       exc=requests.exceptions.ReadTimeout("read timed out"))
+    result = _builder_with(users).submit(_build())
+    assert result["status"] == "success"
+    assert result["request_id"] == "R99"
+    assert result["reconciled"] is True
+    assert users.creates == 1        # never retried
+
+
+def test_client_side_timeout_that_did_not_land_reraises_the_timeout():
+    users = _FakeUsers(exc=requests.exceptions.ReadTimeout("read timed out"))
+    with pytest.raises(requests.exceptions.ReadTimeout):
+        _builder_with(users).submit(_build())
+    assert users.creates == 1
 ```
 
 - [ ] **Step 2: Run to verify it fails**
@@ -1007,9 +1125,10 @@ value without updating that document and the evidence behind it.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+import re
 from typing import Any, Dict, Optional
 
+import requests
 from almaapitk import AlmaAPIError
 
 from rs_requests.base import BuiltRequest, RequestBuilder
@@ -1062,9 +1181,20 @@ class BorrowingRequestBuilder(RequestBuilder):
                 )
 
         hospital = form_data["requestor"]
-        timestamp = datetime.now().strftime("%d%m%Y%H%M%S")
         order_number = (form_data.get("order_number") or "").strip()
-        external_id = f"FORMS-BR-{hospital}-{timestamp}"
+        # Stable across retries (GH #13): the token is the input file's mtime
+        # (stamped by the reader), and the sanitized stem is unique among
+        # concurrently pending files (a directory cannot hold two files with
+        # one name). Same file → same id on every retry, so a re-run
+        # reconciles instead of duplicating; two same-second files can no
+        # longer collide either, because their stems differ (GH #15).
+        token = (form_data.get("file_token") or "").strip()
+        if not token:
+            raise BorrowingValidationError(
+                "file_token missing from form data — reader must stamp it"
+            )
+        stem = re.sub(r"[^A-Za-z0-9_-]", "_", form_data.get("filename") or "")[:40]
+        external_id = f"FORMS-BR-{hospital}-{token}-{stem}"
         if order_number:
             external_id = f"{external_id}-{order_number}"
 
@@ -1127,11 +1257,29 @@ class BorrowingRequestBuilder(RequestBuilder):
         # __init__); reuse it rather than constructing a second one.
         users = self.processor.users
         hospital = built.summary["requestor"]
+        # The id is stable across retries of the same file (GH #13), so an
+        # earlier run may already have created this request and died before
+        # recording it. Ask first — never blind-POST a stable id.
+        existing = self._find_by_external_id(hospital, built.external_id)
+        if existing is not None:
+            self.processor.logger.warning(
+                f"  external_id {built.external_id} already exists in Alma "
+                f"(request {existing.get('request_id')}) — reconciled, not re-created."
+            )
+            return {"status": "success",
+                    "request_id": existing.get("request_id"),
+                    "external_id": built.external_id,
+                    "reconciled": True, **built.summary}
         try:
             response = users.create_user_rs_request(hospital, built.payload)
-        except AlmaAPIError as e:
+        except (AlmaAPIError, requests.RequestException) as e:
             # A create can time out and still save. Never blind-retry —
             # ask Alma whether our external_id already landed.
+            # requests.RequestException is caught explicitly because
+            # almaapitk 0.4.6 does NOT wrap transport errors (socket
+            # timeouts, connection resets) in AlmaAPIError — and the
+            # timed-out-but-saved create is precisely the transport case.
+            # See GH issue #9; the root fix belongs in almaapitk.
             existing = self._find_by_external_id(hospital, built.external_id)
             if existing is None:
                 raise
@@ -1153,31 +1301,40 @@ class BorrowingRequestBuilder(RequestBuilder):
                              external_id: str) -> Optional[Dict[str, Any]]:
         """Return the request if external_id already exists in Alma, else None.
 
-        Used only to reconcile after a failed create. A lookup failure here is
-        never fatal — it just means we cannot prove the create landed, so the
-        caller re-raises the original error.
+        Called before every create (the id is stable across retries, GH #13)
+        and again after a failed one. Returning None covers both genuinely
+        absent and lookup-failed — either way we cannot prove the request
+        exists, so the caller proceeds to create / re-raises accordingly.
         """
         try:
             return self.processor.users.get_user_rs_request(
                 hospital, external_id, request_id_type="external"
             )
         except Exception as lookup_error:      # noqa: BLE001 — diagnostic only
-            self.processor.logger.warning(
-                f"  Reconcile lookup for {external_id} failed: {lookup_error}"
+            # debug, not warning: for a brand-new file the pre-create probe
+            # is EXPECTED to come back not-found on every run.
+            self.processor.logger.debug(
+                f"  No existing request for {external_id}: {lookup_error}"
             )
             return None
 ```
 
 **Verify the reconcile lookup before trusting it.** `request_id_type="external"`
 is asserted by Task 0 to exist as a parameter, but that only proves the
-signature — not that Alma resolves our `external_id` through it. Matrix test
-**T-08 must run before any production use**; until it passes, treat the
-reconcile branch as unproven and expect the `raise`.
+signature — not that Alma resolves our `external_id` through it (GH #14: there
+is no offline evidence that a POST-supplied `external_id` is even persisted).
+Matrix test **T-08 must run before any production use**; until it passes,
+treat the reconcile branch as unproven and expect the `raise`.
+
+Residual risk to keep in view: if T-08 *disproves* the external lookup, the
+pre-create probe silently degrades to always-miss — every retry then creates,
+and the timed-out-but-saved case duplicates. That is exactly why T-08 gates
+`enabled: true`, not merely the reconcile feature.
 
 - [ ] **Step 5: Run to verify it passes**
 
 Run: `poetry run pytest tests/test_borrowing_builder.py -v`
-Expected: PASS (13 tests)
+Expected: PASS (16 tests)
 
 - [ ] **Step 6: Run the whole offline suite**
 
@@ -1187,7 +1344,7 @@ Expected: everything green, lending golden included.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add rs_requests/metadata.py rs_requests/borrowing.py tests/test_borrowing_builder.py
+git add rs_requests/metadata.py rs_requests/borrowing.py tests/test_borrowing_builder.py tests/borrowing_fixtures.py
 git commit -m "feat: build borrowing request payloads from the verified field template"
 ```
 
@@ -1206,6 +1363,9 @@ git commit -m "feat: build borrowing request payloads from the verified field te
 - [ ] **Step 1: Write the failing test**
 
 ```python
+from tests.borrowing_fixtures import META
+
+
 def test_end_to_end_dry_run_builds_a_payload(tmp_path, monkeypatch):
     """A borrowing file produces a payload without any network call."""
     import rs_requests.metadata as md
@@ -1240,28 +1400,81 @@ Expected: FAIL — `process_tsv_file()` takes no `kind` argument
 
 - [ ] **Step 3: Implement**
 
-Change the signature to `def process_tsv_file(self, file_path: Path, kind: str = 'lending') -> Dict[str, Any]:` and at the top of the body:
+Change the signature to `def process_tsv_file(self, file_path: Path, kind: str = 'lending') -> Dict[str, Any]:` and at the top of the body — **before the `try`** (this check cannot raise, so it is safe outside error isolation):
 
 ```python
-        if kind == 'borrowing':
-            if not self.borrowing_config.get('enabled', False):
-                self.logger.warning(
-                    f"Borrowing is disabled in config; skipping {file_path.name}"
-                )
-                return {'status': 'skipped', 'kind': kind,
-                        'filename': file_path.name,
-                        'error_message': 'borrowing disabled in config'}
-            form_data = self.read_borrowing_tsv_file(file_path)
-        else:
-            form_data = self.read_tsv_file(file_path)
+        if kind == 'borrowing' and not self.borrowing_config.get('enabled', False):
+            self.logger.warning(
+                f"Borrowing is disabled in config; skipping {file_path.name}"
+            )
+            return {'status': 'skipped', 'kind': kind,
+                    'filename': file_path.name,
+                    'error_message': 'borrowing disabled in config'}
 ```
 
-replacing the existing `form_data = self.read_tsv_file(file_path)` line. Then
-route the terminal call through `self.create_request_from_form(form_data, kind=kind)`
+Then, **inside the `try`**, replace the existing read + `result.update` block.
+The current block direct-indexes `form_data['partner_code']`, `user_name`,
+`user_id`, `is_faculty` — keys that do not exist in borrowing form data, so
+leaving it unbranched raises `KeyError` on every borrowing file, swallowed by
+the generic `except Exception` into a misleading `status='error'` (GH issue #10):
+
+```python
+            if kind == 'borrowing':
+                form_data = self.read_borrowing_tsv_file(file_path)
+                result.update({
+                    # No partner at create time — the rota assigns one later.
+                    'partner_code': '',
+                    'user_name': '',
+                    # The hospital proxy code IS the requesting user of a
+                    # borrowing request; surfacing it as user_id lands it in
+                    # the reports' existing Requestor_ID column.
+                    'user_id': form_data['requestor'],
+                    'is_faculty': '',
+                    'requestor': form_data['requestor'],
+                    'identifier': form_data['identifier'],
+                    'order_number': form_data['order_number']
+                })
+            else:
+                form_data = self.read_tsv_file(file_path)
+                result.update({
+                    'partner_code': form_data['partner_code'],
+                    'user_name': form_data['user_name'],
+                    'user_id': form_data['user_id'],
+                    'is_faculty': form_data['is_faculty'],
+                    'identifier': form_data['identifier'],
+                    'order_number': form_data['order_number']
+                })
+```
+
+Route the terminal call through `self.create_request_from_form(form_data, kind=kind)`
 and add `'kind': kind` to every returned result dict.
 
+Extend the except ladder with the two exception types only the borrowing path
+raises, inserted **before** the generic `except Exception`, keeping lending's
+semantics (validation problems are permanent → `skipped`; fetch problems →
+`error`):
+
+```python
+        except BorrowingValidationError as e:
+            self.logger.error(f"✗ Borrowing validation error: {e}")
+            result['status'] = 'skipped'
+            result['error_message'] = str(e)
+
+        except CitationMetadataError as e:
+            self.logger.error(f"✗ Metadata fetch error: {e}")
+            result['status'] = 'error'
+            result['error_message'] = str(e)
+```
+
+`CitationMetadataError` is already imported at the top of the processor (the
+lending path never lets it escape — it wraps it in `MetadataFetchError` — so
+this clause only ever fires for borrowing). Import `BorrowingValidationError`
+from `rs_requests.borrowing` alongside the processor's other imports.
+
 Add a `Kind` column to the CSV report header in `generate_csv_report` and
-`_append_daily_report`, populated from `result.get('kind', 'lending')`.
+`_append_daily_report`, populated from `result.get('kind', 'lending')`. Both
+writers already use `result.get(...)` with defaults, so the empty
+lending-specific fields of borrowing rows need no further handling.
 
 - [ ] **Step 4: Run to verify it passes**
 
