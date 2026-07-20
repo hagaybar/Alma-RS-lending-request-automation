@@ -9,13 +9,18 @@
    Never pass a key on a command line; never print it.
 2. **Generous timeout.** `AlmaAPIClient("SANDBOX", timeout=180)`. A create can
    exceed the 60s default and *still save*.
-3. **Never blind-retry a create.** A timed-out POST may already have saved.
-   Reconcile by `external_id` before retrying, or you manufacture a duplicate.
+3. **Never hand-retry a create blindly.** A timed-out POST may already have
+   saved. `VERIFIED` 2026-07-20: an identical re-POST is rejected `402362`
+   while the original is active — that rejection **is** the recovery signal
+   (guidebook §8.3). Reconcile-by-`external_id` is **not** available: Alma
+   discards client external_ids on POST (guidebook §8.1).
 4. **Distinctive titles.** Every test title below is deliberately unlikely to
    match TAU holdings, to avoid `401604` ("institutional inventory has
    services for the requested title"), which blocks the create with HTTP 400.
-5. **Stable `external_id` per test.** Use the `SBTEST-<id>-<YYYYMMDD>` values
-   given. They are the idempotency key and the cleanup handle.
+5. **`SBTEST-<id>-<YYYYMMDD>` external_ids are payload markers only.**
+   `VERIFIED` 2026-07-20: Alma discards them on POST (guidebook §8.1), so
+   they are *not* an idempotency key and *not* queryable. The cleanup handle
+   is the `request_id` from the create **response** — record it immediately.
 6. **Clean up.** Every created request must be cancelled via
    `Users.cancel_user_rs_request(user_id, request_id)` and recorded in §4.
    Three test requests from 2026-07-19 were left behind; do not repeat that.
@@ -204,15 +209,23 @@ exact string.
 | T-07b | `WOLF248; 20260720` | `SBTEST-T07B-20260720` |
 | T-07c | `WOLF9003` | `SBTEST-T07C-20260720` |
 
-### T-08 — Duplicate / idempotency
+### T-08 — Duplicate / idempotency — ✅ **SETTLED 2026-07-20 (both halves)**
 
-**Settles:** the reconcile path. Submit T-01's exact body **a second time**
-with the same `external_id`.
+Two probes ran ahead of the matrix (guidebook §8; GH #14/#35):
 
-**Expect:** `402362` "Patron has duplicate request". Then confirm we can
-recover the original via
-`get_user_rs_request(user_id, external_id, request_id_type="external")` —
-this is the mechanism that makes a timed-out create safe.
+- **First half `VERIFIED`:** an identical body re-POSTed for `SHEB` was
+  rejected `402362` "Patron has duplicate request" while the original was
+  active (request `39940250330004146`, cancelled).
+- **Second half `DISPROVEN`:** recovery via
+  `get_user_rs_request(user_id, external_id, request_id_type="external")` is
+  impossible — Alma discards the POSTed `external_id` (stored `972TAU0068653`
+  instead) and the lookup returns "No result found" (request
+  `39940249320004146`, cancelled).
+
+**Decision (operator, 2026-07-20):** the `402362` rejection is the
+duplicate-safety mechanism; the processor treats it as already-created.
+Config dependency: `check_patron_duplicate_borrowing_requests=true`
+(false by default; enabled at TAU — **verify in PROD before go-live**).
 
 ### T-09 — All eight proxy users
 
@@ -267,7 +280,8 @@ Fill in as tests are run. **A request created and not cancelled is a defect.**
 
 | Test | `external_id` | `request_id` | User | Cancelled | Date |
 |---|---|---|---|---|---|
-| | | | | | |
+| GH #14 probe (pre-matrix) | sent `SBTEST-EXT14-20260720`, stored `972TAU0068653` | `39940249320004146` | SHEB | ✅ yes | 2026-07-20 |
+| GH #35 probe (pre-matrix) | none sent, stored `972TAU0068654` | `39940250330004146` | SHEB | ✅ yes | 2026-07-20 |
 
 Outstanding from 2026-07-19 (created before this matrix existed, still not
 cleaned up): `39940155760004146`, `39940156450004146`, `39940157570004146`.

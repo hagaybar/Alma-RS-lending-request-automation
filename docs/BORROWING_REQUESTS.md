@@ -163,8 +163,11 @@ as a per-hospital configurable template so the answer lands in config, not code.
 
 **`external_id`** — 75/100 populated, in two grammars: `<8 digits>` (53) and
 `972TAU<digits>` (22). These come from two different upstream broker systems.
-Ours will be neither; we mint our own, exactly as the lending path already does
-with `FORMS-{partner}-{timestamp}-{order}`.
+`VERIFIED` 2026-07-20 (probe, §8): **a client-supplied value is discarded on
+POST** — Alma substitutes its own `972TAU…` broker id in the create response,
+and `request_id_type="external"` cannot find our value. **Omit at create.**
+The pipeline still mints a local `FORMS-BR-…` id, but it exists only in logs
+and CSV reports for file correlation — Alma never sees or stores it.
 
 ### 4.6 The copyright fields
 
@@ -186,7 +189,9 @@ There are **two**, and they are unrelated:
 | `40166422` on ~6% of reads — a `resource_sharing.id` nested in a hold request is not always retrievable under that proxy user | `VERIFIED`: 6 failures in 106 fetches |
 | The RS request id is **not** the hold request id. In `GET /bibs/{mms_id}/requests` the top-level `request_id` is the HOLD; the RS id is at `resource_sharing.id` | `VERIFIED` |
 | There is **no GET-collection** endpoint for user RS requests — `/users/{id}/resource-sharing-requests` is POST-only. To enumerate, read `/users/{id}/requests` and take the nested `resource_sharing` block | `VERIFIED` against the users swagger |
-| A create can **time out and still save**. Blind retry produces a duplicate (`402362`) | `VERIFIED` 2026-07-19 |
+| A create can **time out and still save**. The retry then fails `402362` — which is the *safety mechanism*, not a bug (see §8) | `VERIFIED` 2026-07-19, re-verified 2026-07-20 |
+| `external_id` sent on POST is **discarded** — Alma substitutes a `972TAU…` broker id; external lookup for our value returns "No result found" | `VERIFIED` 2026-07-20 (§8) |
+| The `402362` duplicate check is **config-dependent**: customer parameter `check_patron_duplicate_borrowing_requests`, **false by default**, enabled at TAU. Active requests only; compares user + citation fields (Title, ISBN, Volume…) | `VERIFIED` live + Ex Libris FAQ, 2026-07-20 (§8) |
 | `override_blocks=true` pushed a create past a 60s timeout; without it the same body returned in ~3s | `VERIFIED` 2026-07-19. Treat override as a workaround, not the recipe |
 | `401604` "institutional inventory has services for the requested title" blocks a create with HTTP 400 despite the "Warning" wording | `VERIFIED` 2026-07-19. Should be rare here — Power Automate has already established we do *not* hold the item |
 
@@ -216,9 +221,10 @@ Nothing below can be resolved by reading. Each needs a SANDBOX create; see
    to match the manual population?
 3. **Whether omitting `partner` and `mms_id`** produces a request that looks
    like the manual ones once the rota has run.
-4. **Whether the almaapitk floor pinned in `pyproject.toml` exposes
-   `create_user_rs_request` at all.** The RS methods post-date the 0.4.5
-   release; the repo pins `>=0.4.6`. This is Task 0 of the plan.
+4. ~~**Whether the almaapitk floor pinned in `pyproject.toml` exposes
+   `create_user_rs_request` at all.**~~ `SETTLED` 2026-07-20: the installed
+   0.4.6 exposes all three RS methods with matching signatures; Task 0's
+   contract test passes against it.
 
 ## 7. Follow-up outside this repo
 
@@ -227,3 +233,58 @@ Nothing below can be resolved by reading. Each needs a SANDBOX create; see
   contradicted by 1912 real requests (§4.3).
 - Correct "`agree_to_copyright_terms` … mandatory TRUE for borrowing" in the
   same file to reflect the 98/100 `false` observation, pending `T-04`.
+
+## 8. Probe log — 2026-07-20 (all `VERIFIED` live in SANDBOX)
+
+Two targeted probes, run before implementation began, to settle GH issues
+#14/#35. Both requests were cancelled immediately (see the matrix §4 cleanup
+log).
+
+### 8.1 `external_id` is not ours to set
+
+T-01-shaped create for `SHEB` with `"external_id": "SBTEST-EXT14-20260720"`
+(request `39940249320004146`):
+
+- The **create response itself** carried `external_id = '972TAU0068653'` —
+  Alma assigns a broker id at create time and silently discards the client's
+  value. This explains the census's `972TAU…` grammar (§4.5).
+- `get_user_rs_request(user, our_id, request_id_type="external")` →
+  `AlmaAPIError: No result found for given parameters.` A never-sent id fails
+  with the **identical** message, so dropped and never-created are
+  indistinguishable through this endpoint.
+- Consequence: **reconcile-by-external_id is impossible.** Any idempotency
+  design leaning on it is void.
+
+### 8.2 Alma's duplicate rejection is real — and is the safety mechanism
+
+The same T-01-shaped body POSTed twice for `SHEB` (request
+`39940250330004146`):
+
+- Attempt 1: accepted in ~3s.
+- Attempt 2: `AlmaAPIError: Failed to save the request: Patron has duplicate
+  request` (alma_code `402362`).
+
+Ex Libris documentation (Borrowing Requests FAQ) adds the scope: the check
+compares, for the same user, citation fields "such as Title, ISBN, and
+Volume"; it considers **active requests only** (completed/cancelled requests
+do not block a re-request); and it is controlled by the customer parameter
+`check_patron_duplicate_borrowing_requests` — **false by default**, enabled
+at TAU.
+
+### 8.3 The decision (2026-07-20)
+
+**Alma's `402362` rejection is the duplicate-safety mechanism for this
+pipeline.** A create that times out after saving is recovered on the next
+scheduled run: the re-POST is rejected `402362`, the processor records the
+file as `duplicate` (success-like) and moves it to `processed/`.
+
+- **Go-live precondition:** RS librarians confirm
+  `check_patron_duplicate_borrowing_requests=true` in **PRODUCTION** config.
+  The sandbox proves the sandbox, not prod.
+- **Accepted residual risk** (operator decision): a retry whose rebuilt body
+  differs — e.g. PubMed/Crossref metadata drift between runs — could escape
+  the check. Judged low-probability.
+- The local `FORMS-BR-…` id remains for logs/reports only (§4.5).
+- Note for any future list-based reconcile: there is **no GET-collection**
+  endpoint for user RS requests (§5); enumeration goes through
+  `/users/{id}/requests` and its nested `resource_sharing` block.

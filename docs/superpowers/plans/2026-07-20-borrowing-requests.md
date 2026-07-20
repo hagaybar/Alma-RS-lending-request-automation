@@ -18,7 +18,18 @@
 - `owner` is a **plain string**; `pickup_location`, `format`, `citation_type` are **wrapped** as `{"value": ...}`. This asymmetry is the most common cause of `BAD_REQUEST`.
 - **Dry-run by default.** `--live` must be passed explicitly for any API call.
 - **SANDBOX only** for all testing. `AlmaAPIClient("SANDBOX")` reads `ALMA_SB_API_KEY` from the environment. Never place a key on a command line, never print one.
-- **Never blind-retry a create.** A timed-out POST may already have saved; reconcile by `external_id` first.
+- **Duplicate safety is Alma-side — DECISION 2026-07-20 (GH #35).** A timed-out
+  POST may already have saved. Recovery is NOT reconcile-by-external_id: live
+  SANDBOX probes proved Alma discards client external_ids (GH #14). Instead,
+  an identical re-POST for the same patron fails with alma_code `402362`
+  ("Patron has duplicate request") while the original is active — verified
+  live — and `submit()` treats that as already-created (status `duplicate`,
+  file moves to `processed/`). This depends on the customer parameter
+  `check_patron_duplicate_borrowing_requests` being `true` (it is **false by
+  default**; TAU has it enabled). **Go-live precondition: confirm it is true
+  in PRODUCTION config.** Accepted residual risk (user decision): a retry
+  whose rebuilt body differs (metadata drift between runs) could escape the
+  check — judged low-probability.
 - `agree_to_copyright_terms` and `lcc_number` content are **OPEN questions** (guidebook §4.6, §4.5). Both must be config-driven with a documented default, never hardcoded, so the answers land in config without a code change.
 - **PII:** `lcc_number` carries a patron's name. It must be masked on console output using the existing `PiiConsoleFilter` / `_log_pii` mechanism, exactly as `user_id` already is.
 - The lending path is **live production code** running on `masedet` via Task Scheduler. `tests/test_l2_citation_golden.py` must stay green at every commit.
@@ -963,77 +974,54 @@ def test_empty_metadata_fields_are_omitted_not_sent_blank():
 # --- submit(): a failed create must never be blind-retried -------------------
 
 class _FakeUsers:
-    """Scriptable Users stand-in.
+    """Users stand-in whose create always raises exc (failure-path tests)."""
 
-    lookup_results is consumed one entry per get_user_rs_request call: a dict
-    is returned, None raises not-found; when exhausted, not-found. create
-    always raises exc — these tests only exercise the failure paths.
-    """
-
-    def __init__(self, lookup_results=(), exc=None):
-        self.lookup_results = list(lookup_results)
-        self.creates, self.lookups = 0, 0
+    def __init__(self, exc=None):
+        self.creates = 0
         self.exc = exc if exc is not None else AlmaAPIError("HTTP 500")
 
     def create_user_rs_request(self, user_id, request_data, **kw):
         self.creates += 1
         raise self.exc
 
-    def get_user_rs_request(self, user_id, request_id, **kw):
-        self.lookups += 1
-        if self.lookup_results:
-            hit = self.lookup_results.pop(0)
-            if hit is not None:
-                return hit
-        raise AlmaAPIError("not found")
+
+def _alma_error(message, code=""):
+    e = AlmaAPIError(message)
+    e.alma_code = code
+    return e
 
 
-def test_previously_saved_create_is_found_before_posting():
-    """A retry of an already-saved create must never POST again (GH #13)."""
-    users = _FakeUsers(lookup_results=[{"request_id": "R77"}])
+def test_duplicate_rejection_means_already_created():
+    """402362 = an identical active request exists — most importantly when a
+    previous run's create timed out AFTER saving. DECISION 2026-07-20
+    (GH #35): report done, never blind-retry."""
+    users = _FakeUsers(exc=_alma_error(
+        "Failed to save the request: Patron has duplicate request", "402362"))
     result = _builder_with(users).submit(_build())
-    assert result["status"] == "success"
-    assert result["request_id"] == "R77"
-    assert result["reconciled"] is True
-    assert users.creates == 0        # the whole point
+    assert result["status"] == "duplicate"
+    assert result["request_id"] == ""
+    assert users.creates == 1
 
 
-def test_failed_create_that_already_landed_is_reconciled_not_retried():
-    """A timed-out POST that saved resolves to success via external_id."""
-    users = _FakeUsers(lookup_results=[None, {"request_id": "R99"}])
-    result = _builder_with(users).submit(_build())
-    assert result["status"] == "success"
-    assert result["request_id"] == "R99"
-    assert result["reconciled"] is True
-    assert users.creates == 1        # never retried
-    assert users.lookups == 2        # pre-create probe + post-failure reconcile
+def test_duplicate_rejection_matches_by_message_when_code_missing():
+    users = _FakeUsers(exc=_alma_error(
+        "Failed to save the request: Patron has duplicate request"))
+    assert _builder_with(users).submit(_build())["status"] == "duplicate"
 
 
-def test_failed_create_that_did_not_land_reraises():
-    """If external_id is absent, the original error must propagate."""
-    users = _FakeUsers()
+def test_other_api_errors_reraise():
+    users = _FakeUsers(exc=_alma_error(
+        "Patron is not affiliated with a resource sharing library", "401768"))
     with pytest.raises(AlmaAPIError):
         _builder_with(users).submit(_build())
-    assert users.creates == 1        # still never retried
+    assert users.creates == 1        # never internally retried
 
 
-def test_client_side_timeout_is_reconciled_too():
-    """almaapitk 0.4.6 does not wrap transport errors in AlmaAPIError (GH #9).
-
-    A socket read-timeout on the POST surfaces as requests.ReadTimeout —
-    the exact 'timed out but saved' case — and must reach the reconcile
-    branch, not fall through to a blind retry next scheduled run.
-    """
-    users = _FakeUsers(lookup_results=[None, {"request_id": "R99"}],
-                       exc=requests.exceptions.ReadTimeout("read timed out"))
-    result = _builder_with(users).submit(_build())
-    assert result["status"] == "success"
-    assert result["request_id"] == "R99"
-    assert result["reconciled"] is True
-    assert users.creates == 1        # never retried
-
-
-def test_client_side_timeout_that_did_not_land_reraises_the_timeout():
+def test_transport_timeout_reraises_for_the_next_scheduled_run():
+    """almaapitk 0.4.6 does not wrap transport errors (GH #9); a socket
+    timeout must propagate. The file then stays in input, the next run
+    re-POSTs, and if this create actually saved Alma rejects it 402362 —
+    which the duplicate branch converts to done."""
     users = _FakeUsers(exc=requests.exceptions.ReadTimeout("read timed out"))
     with pytest.raises(requests.exceptions.ReadTimeout):
         _builder_with(users).submit(_build())
@@ -1128,7 +1116,6 @@ import logging
 import re
 from typing import Any, Dict, Optional
 
-import requests
 from almaapitk import AlmaAPIError
 
 from rs_requests.base import BuiltRequest, RequestBuilder
@@ -1210,7 +1197,10 @@ class BorrowingRequestBuilder(RequestBuilder):
             "citation_type": {"value": citation_type},
             "agree_to_copyright_terms": bool(cfg.get("agree_to_copyright_terms", False)),
             "title": title,
-            "external_id": external_id,
+            # external_id is deliberately NOT sent: the 2026-07-20 SANDBOX
+            # probe (GH #14) showed Alma discards the client's value and
+            # substitutes a broker id (972TAU…). The local id computed above
+            # exists only for logs, reports and file correlation.
         }
 
         # --- bibliographic fields: included only when non-empty ----------
@@ -1257,84 +1247,80 @@ class BorrowingRequestBuilder(RequestBuilder):
         # __init__); reuse it rather than constructing a second one.
         users = self.processor.users
         hospital = built.summary["requestor"]
-        # The id is stable across retries of the same file (GH #13), so an
-        # earlier run may already have created this request and died before
-        # recording it. Ask first — never blind-POST a stable id.
-        existing = self._find_by_external_id(hospital, built.external_id)
-        if existing is not None:
-            self.processor.logger.warning(
-                f"  external_id {built.external_id} already exists in Alma "
-                f"(request {existing.get('request_id')}) — reconciled, not re-created."
-            )
-            return {"status": "success",
-                    "request_id": existing.get("request_id"),
-                    "external_id": built.external_id,
-                    "reconciled": True, **built.summary}
         try:
             response = users.create_user_rs_request(hospital, built.payload)
-        except (AlmaAPIError, requests.RequestException) as e:
-            # A create can time out and still save. Never blind-retry —
-            # ask Alma whether our external_id already landed.
-            # requests.RequestException is caught explicitly because
-            # almaapitk 0.4.6 does NOT wrap transport errors (socket
-            # timeouts, connection resets) in AlmaAPIError — and the
-            # timed-out-but-saved create is precisely the transport case.
-            # See GH issue #9; the root fix belongs in almaapitk.
-            existing = self._find_by_external_id(hospital, built.external_id)
-            if existing is None:
-                raise
-            self.processor.logger.warning(
-                f"  Create reported {e}, but external_id {built.external_id} "
-                f"already exists in Alma — treating as created, not retrying."
-            )
-            return {"status": "success",
-                    "request_id": existing.get("request_id"),
-                    "external_id": built.external_id,
-                    "reconciled": True, **built.summary}
+        except AlmaAPIError as e:
+            if self._is_duplicate_rejection(e):
+                # DECISION 2026-07-20 (GH #35): Alma's duplicate check IS the
+                # safety mechanism. This fires when an identical request is
+                # already active for this patron — most importantly when a
+                # previous run's create timed out AFTER saving. Treat as
+                # already created: report it and let the file move out of
+                # input, ending the retry loop.
+                self.processor.logger.warning(
+                    f"  Alma rejected as duplicate (402362): an identical "
+                    f"active request already exists for {hospital} — "
+                    f"treating as already created."
+                )
+                return {"status": "duplicate",
+                        "request_id": "",   # unknowable — Alma doesn't say which
+                        "external_id": built.external_id, **built.summary}
+            raise
+        # requests.RequestException (socket timeout, connection reset) is
+        # deliberately NOT caught: almaapitk 0.4.6 does not wrap transport
+        # errors (GH #9), and re-raising is correct here — the file stays in
+        # input, the next scheduled run re-POSTs, and if this create actually
+        # saved, Alma answers 402362 and the branch above finishes the job.
         data = response.data or {}
         self.processor.logger.info("✓ Borrowing request created")
         self.processor.logger.info(f"  Request ID: {data.get('request_id')}")
         return {"status": "success", "request_id": data.get("request_id"),
                 "external_id": built.external_id, **built.summary}
 
-    def _find_by_external_id(self, hospital: str,
-                             external_id: str) -> Optional[Dict[str, Any]]:
-        """Return the request if external_id already exists in Alma, else None.
+    @staticmethod
+    def _is_duplicate_rejection(e: AlmaAPIError) -> bool:
+        """True when Alma refused the create because an identical request is
+        already active for this patron (verified live 2026-07-20, GH #35).
 
-        Called before every create (the id is stable across retries, GH #13)
-        and again after a failed one. Returning None covers both genuinely
-        absent and lookup-failed — either way we cannot prove the request
-        exists, so the caller proceeds to create / re-raises accordingly.
+        alma_code is the structural match; the message fallback covers error
+        bodies the toolkit could not parse into a code.
         """
-        try:
-            return self.processor.users.get_user_rs_request(
-                hospital, external_id, request_id_type="external"
-            )
-        except Exception as lookup_error:      # noqa: BLE001 — diagnostic only
-            # debug, not warning: for a brand-new file the pre-create probe
-            # is EXPECTED to come back not-found on every run.
-            self.processor.logger.debug(
-                f"  No existing request for {external_id}: {lookup_error}"
-            )
-            return None
+        if getattr(e, "alma_code", "") == "402362":
+            return True
+        return "patron has duplicate request" in str(e).lower()
 ```
 
-**Verify the reconcile lookup before trusting it.** `request_id_type="external"`
-is asserted by Task 0 to exist as a parameter, but that only proves the
-signature — not that Alma resolves our `external_id` through it (GH #14: there
-is no offline evidence that a POST-supplied `external_id` is even persisted).
-Matrix test **T-08 must run before any production use**; until it passes,
-treat the reconcile branch as unproven and expect the `raise`.
+**Decision record — 2026-07-20 (GH #35).** Reconcile-by-external_id was
+removed after two live SANDBOX probes replaced assumptions with facts:
 
-Residual risk to keep in view: if T-08 *disproves* the external lookup, the
-pre-create probe silently degrades to always-miss — every retry then creates,
-and the timed-out-but-saved case duplicates. That is exactly why T-08 gates
-`enabled: true`, not merely the reconcile feature.
+1. **`external_id` sent on POST is discarded.** Alma substitutes a broker id
+   (`972TAU…`) in the create response itself; a
+   `request_id_type="external"` lookup for our value returns
+   *"No result found for given parameters"* — indistinguishable from
+   never-created (GH #14; probe request `39940249320004146`, cancelled).
+2. **An identical re-POST while the original is active fails with alma_code
+   `402362`** *"Patron has duplicate request"* (probe request
+   `39940250330004146`, cancelled). This is the duplicate-safety mechanism.
+
+Scope and dependencies (Ex Libris FAQ + probes):
+
+- Duplicate = same user + citation fields ("Title, ISBN, Volume…" — not
+  exhaustively documented; an identical rebuilt body is the verified case).
+- **Active requests only** — completed/cancelled requests do not block, so
+  legitimate re-requests keep working.
+- Controlled by customer parameter
+  `check_patron_duplicate_borrowing_requests` — **false by default**; TAU has
+  it enabled, which is why the sandbox rejects.
+
+**Go-live preconditions:** (1) RS librarians confirm the parameter is `true`
+in PRODUCTION config; (2) accepted residual risk (user decision, 2026-07-20):
+a retry whose rebuilt body differs — e.g. upstream metadata drift between
+runs — could escape the check. Judged low-probability and acceptable.
 
 - [ ] **Step 5: Run to verify it passes**
 
 Run: `poetry run pytest tests/test_borrowing_builder.py -v`
-Expected: PASS (16 tests)
+Expected: PASS (15 tests)
 
 - [ ] **Step 6: Run the whole offline suite**
 
@@ -1475,6 +1461,18 @@ Add a `Kind` column to the CSV report header in `generate_csv_report` and
 `_append_daily_report`, populated from `result.get('kind', 'lending')`. Both
 writers already use `result.get(...)` with defaults, so the empty
 lending-specific fields of borrowing rows need no further handling.
+
+Extend the move-to-processed condition with the `duplicate` status (the
+DECISION 2026-07-20 outcome — Alma confirmed the request already exists, so
+the file is done and must leave the input folder or it retries forever):
+
+```python
+            if result['status'] in ['success', 'dry_run_success', 'duplicate']:
+                self.move_to_processed(file_path)
+```
+
+`duplicate` rows appear in the CSV with an empty `Request_ID` — Alma's 402362
+rejection does not say which existing request matched.
 
 - [ ] **Step 4: Run to verify it passes**
 
@@ -1710,7 +1708,9 @@ Under **Gotchas**, add:
 ```markdown
 - Borrowing `owner` is a plain string but `pickup_location` is wrapped `{"value": ...}` — the most common cause of a borrowing `BAD_REQUEST`
 - `agree_to_copyright_terms` and `lcc_number_template` are unresolved (see the guidebook); both are config-driven so the answer needs no code change
-- A borrowing create can time out and still save — never blind-retry, reconcile by `external_id`
+- A borrowing create can time out and still save — recovery is Alma's own `402362`
+  duplicate rejection on the next run's re-POST (see the Decision record in Task 5),
+  which depends on `check_patron_duplicate_borrowing_requests=true` in config
 ```
 
 In `README.md`, add a **Borrowing Requests** section describing the second
