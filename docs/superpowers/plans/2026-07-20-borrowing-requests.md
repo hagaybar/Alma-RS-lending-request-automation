@@ -765,11 +765,14 @@ The core of the work. Every value traces to `docs/BORROWING_REQUESTS.md` §4.
 ```python
 import pytest
 
+from almaapitk import AlmaAPIError
+
 from rs_requests.borrowing import BorrowingRequestBuilder, BorrowingValidationError
 
 
 class FakeProcessor:
     dry_run = True
+    users = None          # set by _builder_with() for the submit() tests
     borrowing_config = {
         "owner": "AM1", "pickup_location": "AM1",
         "pickup_location_type": "LIBRARY", "default_format": "DIGITAL",
@@ -803,6 +806,13 @@ def _build(form=None, meta=None, config=None):
         proc.borrowing_config = {**FakeProcessor.borrowing_config, **config}
     return BorrowingRequestBuilder(proc).build({**FORM, **(form or {})},
                                                {**META, **(meta or {})})
+
+
+def _builder_with(users):
+    """A builder whose processor exposes the given (fake) Users client."""
+    proc = FakeProcessor()
+    proc.users = users
+    return BorrowingRequestBuilder(proc)
 
 
 def test_constants_match_the_verified_template():
@@ -870,6 +880,46 @@ def test_empty_metadata_fields_are_omitted_not_sent_blank():
     p = _build(meta={"isbn": "", "publisher": ""}).payload
     assert "isbn" not in p
     assert "publisher" not in p
+
+
+# --- submit(): a failed create must never be blind-retried -------------------
+
+class _FakeUsers:
+    """Records calls so the test can assert no second create was attempted."""
+
+    def __init__(self, existing=None):
+        self.existing, self.creates, self.lookups = existing, 0, 0
+
+    def create_user_rs_request(self, user_id, request_data, **kw):
+        self.creates += 1
+        raise AlmaAPIError("timeout")
+
+    def get_user_rs_request(self, user_id, request_id, **kw):
+        self.lookups += 1
+        if self.existing is None:
+            raise AlmaAPIError("not found")
+        return self.existing
+
+
+def test_failed_create_that_already_landed_is_reconciled_not_retried():
+    """A timed-out POST that saved resolves to success via external_id."""
+    users = _FakeUsers(existing={"request_id": "R99"})
+    builder, built = _builder_with(users), _build()
+    result = builder.submit(built)
+    assert result["status"] == "success"
+    assert result["request_id"] == "R99"
+    assert result["reconciled"] is True
+    assert users.creates == 1        # never retried
+    assert users.lookups == 1
+
+
+def test_failed_create_that_did_not_land_reraises():
+    """If external_id is absent, the original error must propagate."""
+    users = _FakeUsers(existing=None)
+    builder = _builder_with(users)
+    with pytest.raises(AlmaAPIError):
+        builder.submit(_build())
+    assert users.creates == 1        # still never retried
 ```
 
 - [ ] **Step 2: Run to verify it fails**
@@ -888,6 +938,22 @@ poetry run python -c "import inspect, almaapitk.utils.citation_metadata as m; pr
 Then adapt the two calls below to match what it prints. Everything downstream
 depends only on this module's normalised output, so a signature difference is
 contained here.
+
+**Known key drift — do not assume `FIELDS` is satisfied.** The toolkit emits
+`pages` and has no `start_page`/`end_page`; the split is derived below. More
+importantly, `issn` / `isbn` / `publisher` / `pmid` are *not* confirmed to be
+emitted by either helper, and the `raw.get(k, "")` below fails silently — a
+missing key is indistinguishable from an empty value. Before writing this
+module, print an actual result from each source:
+
+```bash
+poetry run python -c "import almaapitk.utils.citation_metadata as m; print(sorted(m.get_pubmed_metadata('33301246'))); print(sorted(m.get_crossref_metadata('10.1038/nature12373')))"
+```
+
+Any name in `FIELDS` absent from *both* outputs must either be dropped from
+`FIELDS` or mapped from the key the toolkit actually uses. Do not leave a field
+in `FIELDS` that can only ever be empty — the borrowing payload would then omit
+it without anything reporting why.
 
 ```python
 """Citation metadata, normalised to one internal shape.
@@ -944,7 +1010,7 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from almaapitk import AlmaAPIError, Users
+from almaapitk import AlmaAPIError
 
 from rs_requests.base import BuiltRequest, RequestBuilder
 
@@ -1057,25 +1123,61 @@ class BorrowingRequestBuilder(RequestBuilder):
         )
 
     def submit(self, built: BuiltRequest) -> Dict[str, Any]:
-        users = Users(self.processor.client)
+        # The processor already wires a Users client (see the processor's
+        # __init__); reuse it rather than constructing a second one.
+        users = self.processor.users
         hospital = built.summary["requestor"]
         try:
             response = users.create_user_rs_request(hospital, built.payload)
         except AlmaAPIError as e:
-            # A create can time out and still save. Never blind-retry:
-            # reconcile by external_id instead.
-            raise
+            # A create can time out and still save. Never blind-retry —
+            # ask Alma whether our external_id already landed.
+            existing = self._find_by_external_id(hospital, built.external_id)
+            if existing is None:
+                raise
+            self.processor.logger.warning(
+                f"  Create reported {e}, but external_id {built.external_id} "
+                f"already exists in Alma — treating as created, not retrying."
+            )
+            return {"status": "success",
+                    "request_id": existing.get("request_id"),
+                    "external_id": built.external_id,
+                    "reconciled": True, **built.summary}
         data = response.data or {}
         self.processor.logger.info("✓ Borrowing request created")
         self.processor.logger.info(f"  Request ID: {data.get('request_id')}")
         return {"status": "success", "request_id": data.get("request_id"),
                 "external_id": built.external_id, **built.summary}
+
+    def _find_by_external_id(self, hospital: str,
+                             external_id: str) -> Optional[Dict[str, Any]]:
+        """Return the request if external_id already exists in Alma, else None.
+
+        Used only to reconcile after a failed create. A lookup failure here is
+        never fatal — it just means we cannot prove the create landed, so the
+        caller re-raises the original error.
+        """
+        try:
+            return self.processor.users.get_user_rs_request(
+                hospital, external_id, request_id_type="external"
+            )
+        except Exception as lookup_error:      # noqa: BLE001 — diagnostic only
+            self.processor.logger.warning(
+                f"  Reconcile lookup for {external_id} failed: {lookup_error}"
+            )
+            return None
 ```
+
+**Verify the reconcile lookup before trusting it.** `request_id_type="external"`
+is asserted by Task 0 to exist as a parameter, but that only proves the
+signature — not that Alma resolves our `external_id` through it. Matrix test
+**T-08 must run before any production use**; until it passes, treat the
+reconcile branch as unproven and expect the `raise`.
 
 - [ ] **Step 5: Run to verify it passes**
 
 Run: `poetry run pytest tests/test_borrowing_builder.py -v`
-Expected: PASS (11 tests)
+Expected: PASS (13 tests)
 
 - [ ] **Step 6: Run the whole offline suite**
 
