@@ -1786,7 +1786,19 @@ def test_mask_leaves_nameless_conventions_intact():
 def test_mask_handles_empty():
     assert mask_lcc_number("") == ""
     assert mask_lcc_number(None) == ""
+
+
+def test_mask_handles_empty_order_number_segment():
+    """order_number is optional — an empty segment must still mask (review 2026-07-22)."""
+    assert mask_lcc_number("SHEB-TAU- Some Patron") == "SHEB-TAU- ***"
 ```
+
+> Also add an end-to-end console/file split test for the `lcc_number`
+> `_log_pii` call site (mirror `test_note_pii_in_file_not_on_console`'s
+> mechanics): template `"{hospital}-TAU-{order_number} {patron_name}"`,
+> empty order_number, patron name `Some Patron` — assert the name reaches
+> the file log and never the console (review 2026-07-22: the four unit
+> tests alone never exercise the actual leak surface).
 
 - [ ] **Step 2: Run to verify it fails**
 
@@ -1813,8 +1825,11 @@ def mask_lcc_number(value: Optional[str]) -> str:
         return ""
     # The prefix segment is NOT digits-only: this repo's order numbers look
     # like 'Order_Num_24586' (GH #16), so the rendered template can be
-    # 'SHEB-TAU-Order_9 <patron name>'. Match any word-ish final segment.
-    match = re.match(r"^([A-Za-z]+-[A-Za-z]+-[A-Za-z0-9_]+)\s+\S.*$",
+    # 'SHEB-TAU-Order_9 <patron name>'. Match any word-ish final segment —
+    # including EMPTY (order_number is optional; 'SHEB-TAU- <name>' must
+    # still mask — review finding 2026-07-22). Prefix assumes single-token
+    # hospital codes, which allowed_hospitals currently guarantees.
+    match = re.match(r"^([A-Za-z]+-[A-Za-z]+-[A-Za-z0-9_]*)\s+\S.*$",
                      value.strip())
     if match:
         return f"{match.group(1)} ***"
