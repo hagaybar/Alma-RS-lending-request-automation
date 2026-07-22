@@ -1,4 +1,7 @@
-"""Shared fixtures for the borrowing-requests feature branch (GH #22)."""
+"""Shared fixtures for the borrowing-requests feature branch (GH #22).
+
+file_processing paths here are placeholders — every consumer MUST override them with tmp_path-based paths before constructing a processor (tests must never write into the repo's live input/, processed/ or output/ folders).
+"""
 
 CONFIG = {
     "alma_settings": {"environment": "SANDBOX", "owner": "AM1", "format_type": "DIGITAL"},

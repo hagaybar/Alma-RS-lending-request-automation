@@ -1,12 +1,8 @@
 """Characterization: freeze what the lending path builds today.
 
-Runs in dry-run, so no API call is made. Asserts on the params dict handed
-to the toolkit, captured by monkeypatching the domain object.
+Runs in dry-run, so no API call is made. Asserts on the dry-run result dict returned by create_lending_request_from_form.
 """
-import json
 from pathlib import Path
-
-import pytest
 
 from resource_sharing_forms_processor import ResourceSharingFormsProcessor
 from tests.borrowing_fixtures import CONFIG
@@ -20,7 +16,13 @@ FORM = {
 
 
 def test_lending_params_are_unchanged(tmp_path):
-    proc = ResourceSharingFormsProcessor(CONFIG, dry_run=True)
+    cfg = dict(CONFIG)
+    cfg["file_processing"] = {
+        "input_folder": str(tmp_path / "input"),
+        "processed_folder": str(tmp_path / "processed"),
+        "output_dir": str(tmp_path / "output"),
+    }
+    proc = ResourceSharingFormsProcessor(cfg, dry_run=True)
     result = proc.create_lending_request_from_form(dict(FORM))
 
     assert result["status"] == "dry_run_success"
