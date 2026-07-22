@@ -5,6 +5,7 @@
     "owner": "AM1",
     "format_type": "DIGITAL"
   },
+  "api_timeout_seconds": 180,
   "file_processing": {
     "input_folder": "./input",
     "borrowing_input_folder": "./input_borrowing",
@@ -40,6 +41,7 @@
     "processed_folder: Where completed files are moved",
     "output_dir: Where logs and reports are saved",
     "poll_interval: Seconds between checks in watch mode (default: 60)",
+    "api_timeout_seconds: Alma API client HTTP timeout in seconds (default: 180) — shared by lending and borrowing creates; a borrowing create can exceed the previous 60s default and still save",
     "borrowing.enabled: master switch; false means borrowing files are ignored entirely",
     "borrowing scope (DECISION 2026-07-22): articles only — CR + DIGITAL. A material_type other than CR is rejected before any API call",
     "borrowing.agree_to_copyright_terms: OPEN — 98/100 real requests store false; confirm with SB test T-04 before changing",

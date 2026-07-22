@@ -65,6 +65,13 @@ from rs_requests.errors import (
     FileProcessingError,
 )
 
+# rs_requests.borrowing's own module-level imports (almaapitk, rs_requests.base)
+# are already a hard dependency of this module (almaapitk is imported above
+# unconditionally, for the lending path too), so importing it here at module
+# level cannot make lending's startup depend on anything lending doesn't
+# already require.
+from rs_requests.borrowing import BorrowingValidationError
+
 
 def mask_user_id(user_id: Optional[str]) -> str:
     """Mask a patron identifier for safe console display.
@@ -150,7 +157,10 @@ class ResourceSharingFormsProcessor:
         # Initialize Alma clients (unless dry-run)
         if not dry_run:
             self.logger.info(f"Initializing Alma API client for {self.environment}")
-            self.client = AlmaAPIClient(self.environment)
+            self.client = AlmaAPIClient(
+                self.environment,
+                timeout=int(config.get('api_timeout_seconds', 180)),
+            )
             self.rs = ResourceSharing(self.client)
             self.users = Users(self.client)
 
@@ -753,9 +763,9 @@ class ResourceSharingFormsProcessor:
 
         Args:
             file_path: Path to TSV file
-            kind: Request kind ('lending' or 'borrowing'). Accepted but not
-                yet used — routing to the borrowing builder lands in a later
-                task (GH #21: keeps this task's call sites runtime-valid).
+            kind: Request kind ('lending' or 'borrowing'). Routes the file
+                read (read_tsv_file vs read_borrowing_tsv_file) and the
+                request build (create_request_from_form(..., kind=kind)).
 
         Returns:
             Result dictionary with processing status
@@ -768,27 +778,51 @@ class ResourceSharingFormsProcessor:
             'timestamp': datetime.now().isoformat(),
             'filename': file_path.name,
             'status': 'unknown',
+            'kind': kind,
             'error_message': ''
         }
 
-        try:
-            # Read TSV file
-            form_data = self.read_tsv_file(file_path)
-            result.update({
-                'partner_code': form_data['partner_code'],
-                'user_name': form_data['user_name'],
-                'user_id': form_data['user_id'],
-                'is_faculty': form_data['is_faculty'],
-                'identifier': form_data['identifier'],
-                'order_number': form_data['order_number']
-            })
+        if kind == 'borrowing' and not self.borrowing_config.get('enabled', False):
+            self.logger.warning(
+                f"Borrowing is disabled in config; skipping {file_path.name}"
+            )
+            return {'status': 'skipped', 'kind': kind,
+                    'filename': file_path.name,
+                    'error_message': 'borrowing disabled in config'}
 
-            # Create lending request
-            request_result = self.create_lending_request_from_form(form_data)
+        try:
+            if kind == 'borrowing':
+                form_data = self.read_borrowing_tsv_file(file_path)
+                result.update({
+                    # No partner at create time — the rota assigns one later.
+                    'partner_code': '',
+                    'user_name': '',
+                    # The hospital proxy code IS the requesting user of a
+                    # borrowing request; surfacing it as user_id lands it in
+                    # the reports' existing Requestor_ID column.
+                    'user_id': form_data['requestor'],
+                    'is_faculty': '',
+                    'requestor': form_data['requestor'],
+                    'identifier': form_data['identifier'],
+                    'order_number': form_data['order_number']
+                })
+            else:
+                form_data = self.read_tsv_file(file_path)
+                result.update({
+                    'partner_code': form_data['partner_code'],
+                    'user_name': form_data['user_name'],
+                    'user_id': form_data['user_id'],
+                    'is_faculty': form_data['is_faculty'],
+                    'identifier': form_data['identifier'],
+                    'order_number': form_data['order_number']
+                })
+
+            # Create request (lending or borrowing, per kind)
+            request_result = self.create_request_from_form(form_data, kind=kind)
             result.update(request_result)
 
             # Move to processed folder
-            if result['status'] in ['success', 'dry_run_success']:
+            if result['status'] in ['success', 'dry_run_success', 'duplicate']:
                 self.move_to_processed(file_path)
 
         except IdentifierDetectionError as e:
@@ -808,6 +842,16 @@ class ResourceSharingFormsProcessor:
 
         except FileProcessingError as e:
             self.logger.error(f"✗ File processing error: {e}")
+            result['status'] = 'error'
+            result['error_message'] = str(e)
+
+        except BorrowingValidationError as e:
+            self.logger.error(f"✗ Borrowing validation error: {e}")
+            result['status'] = 'skipped'
+            result['error_message'] = str(e)
+
+        except CitationMetadataError as e:
+            self.logger.error(f"✗ Metadata fetch error: {e}")
             result['status'] = 'error'
             result['error_message'] = str(e)
 
@@ -1017,7 +1061,7 @@ class ResourceSharingFormsProcessor:
 
         # CSV columns
         fieldnames = [
-            'Timestamp', 'Filename', 'Partner_Code', 'Full_Name', 'Requestor_ID',
+            'Timestamp', 'Filename', 'Kind', 'Partner_Code', 'Full_Name', 'Requestor_ID',
             'IsFaculty', 'Order_Number', 'Identifier_Type', 'Identifier', 'Status',
             'Request_ID', 'External_ID', 'Title', 'Error_Message'
         ]
@@ -1031,6 +1075,7 @@ class ResourceSharingFormsProcessor:
                 writer.writerow({
                     'Timestamp': result.get('timestamp', ''),
                     'Filename': result.get('filename', ''),
+                    'Kind': result.get('kind', 'lending'),
                     'Partner_Code': result.get('partner_code', ''),
                     'Full_Name': result.get('user_name', ''),
                     'Requestor_ID': result.get('user_id', ''),
@@ -1096,6 +1141,7 @@ class ResourceSharingFormsProcessor:
         lines = []
         lines.append(f"Processing Log for: {result.get('filename', 'unknown')}")
         lines.append(f"Timestamp: {result.get('timestamp', datetime.now().isoformat())}")
+        lines.append(f"Kind: {result.get('kind', 'lending')}")
         lines.append(f"{'=' * 60}")
         lines.append("")
 
@@ -1159,7 +1205,7 @@ class ResourceSharingFormsProcessor:
         report_file = reports_dir / f'processed_{today}.csv'
 
         fieldnames = [
-            'Timestamp', 'Filename', 'Partner_Code', 'Identifier_Type',
+            'Timestamp', 'Filename', 'Kind', 'Partner_Code', 'Identifier_Type',
             'Identifier', 'Title', 'Status', 'Request_ID', 'External_ID',
             'Error_Message'
         ]
@@ -1175,6 +1221,7 @@ class ResourceSharingFormsProcessor:
             writer.writerow({
                 'Timestamp': result.get('timestamp', ''),
                 'Filename': result.get('filename', ''),
+                'Kind': result.get('kind', 'lending'),
                 'Partner_Code': result.get('partner_code', ''),
                 'Identifier_Type': result.get('detected_type', ''),
                 'Identifier': result.get('identifier', ''),

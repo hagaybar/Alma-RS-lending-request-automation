@@ -72,3 +72,29 @@ def test_column_positions_are_config_driven(tmp_path):
     data = proc.read_borrowing_tsv_file(f)
     assert data["requestor"] == "SHEB"
     assert data["identifier"] == "33219451"
+
+
+def test_end_to_end_dry_run_builds_a_payload(tmp_path):
+    """A borrowing file produces a dry-run result with NO network call —
+    dry-run builds against placeholder metadata (GH #20), so nothing needs
+    monkeypatching."""
+    f = tmp_path / "input_borrowing" / "r.tsv"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("SHEB\t33219451\n", encoding="utf-8")
+
+    proc = _proc(tmp_path)
+    result = proc.process_tsv_file(f, kind="borrowing")
+    assert result["status"] == "dry_run_success"
+    assert result["kind"] == "borrowing"
+    assert result["requestor"] == "SHEB"
+    assert result["detected_type"] == "pmid"     # stamped in the pipeline (GH #28)
+
+
+def test_disabled_borrowing_skips_the_file(tmp_path):
+    f = tmp_path / "input_borrowing" / "r.tsv"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("SHEB\t33219451\n", encoding="utf-8")
+    proc = _proc(tmp_path)
+    proc.borrowing_config = {**proc.borrowing_config, "enabled": False}
+    result = proc.process_tsv_file(f, kind="borrowing")
+    assert result["status"] == "skipped"
