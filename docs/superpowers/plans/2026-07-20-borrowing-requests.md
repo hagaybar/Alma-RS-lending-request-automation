@@ -49,6 +49,7 @@
 |---|---|
 | `rs_requests/__init__.py` | Package marker; re-exports `RequestBuilder`, `BuiltRequest`, `get_builder` |
 | `rs_requests/base.py` | `BuiltRequest` dataclass + `RequestBuilder` ABC + `get_builder()` dispatch |
+| `rs_requests/errors.py` | The `ProcessingError` hierarchy — canonical home (script-mode identity; see Task 2 Step 5) |
 | `rs_requests/metadata.py` | `fetch_citation_metadata()` — thin adapter over the toolkit's PubMed/Crossref helpers, normalising to one internal dict |
 | `rs_requests/lending.py` | `LendingRequestBuilder` — the existing lending behaviour, moved verbatim |
 | `rs_requests/borrowing.py` | `BorrowingRequestBuilder` — validation + `almaapitk.build_user_rs_request` body + submit |
@@ -406,6 +407,31 @@ boundary, so three build-scope locals must be reached through the
 | `external_id` | `built.external_id` |
 | `detected_type` | `built.summary['detected_type']` |
 
+**First, re-home the exception hierarchy.** Production runs the processor
+**as a script**, so its module is `__main__`; if `rs_requests/lending.py`
+imported the exception classes `from resource_sharing_forms_processor`, that
+import would re-execute the file as a *second* module object and split
+exception-class identity — the processor's typed `except` clauses would
+silently stop matching what the builder raises (proven live in review,
+2026-07-22). Therefore: move the five classes (`ProcessingError` base +
+`IdentifierDetectionError`, `MetadataFetchError`, `LendingRequestError`,
+`FileProcessingError`) verbatim into a new `rs_requests/errors.py` (which
+imports nothing back), and replace their definitions in the processor with a
+re-export so every existing importer and test is unaffected:
+
+```python
+# Exception hierarchy lives in rs_requests.errors (one canonical identity —
+# see that module's docstring); re-exported here so existing importers and
+# tests are unaffected.
+from rs_requests.errors import (
+    ProcessingError,
+    IdentifierDetectionError,
+    MetadataFetchError,
+    LendingRequestError,
+    FileProcessingError,
+)
+```
+
 **`build()`** gets the body of `create_lending_request_from_form`
 (`resource_sharing_forms_processor.py:634-750`) — everything from
 `# Extract fields` down to the note logging, i.e. everything **before** the
@@ -434,10 +460,10 @@ from typing import Any, Dict, Optional
 from almaapitk import AlmaAPIError
 from almaapitk.utils.citation_metadata import CitationMetadataError
 
-# Cycle-safe: the processor never imports rs_requests at module level (every
-# get_builder import is deferred into a method body), so importing its
-# exception types here cannot create a circular import.
-from resource_sharing_forms_processor import (
+# From the canonical errors module — NOT from resource_sharing_forms_processor:
+# importing the processor by name from here would create a second module
+# object when production runs it as a script, splitting exception identity.
+from rs_requests.errors import (
     IdentifierDetectionError,
     LendingRequestError,
     MetadataFetchError,
