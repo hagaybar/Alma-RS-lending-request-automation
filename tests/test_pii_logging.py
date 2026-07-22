@@ -76,3 +76,28 @@ def test_note_pii_in_file_not_on_console(tmp_path, capsys):
     assert "Jane Patron" in log_text
     # ...but never on the console/stdout.
     assert "Jane Patron" not in out
+
+
+from resource_sharing_forms_processor import mask_lcc_number
+
+
+def test_mask_keeps_structure_drops_the_name():
+    assert mask_lcc_number("SHEBA-TAU-1680 Some Patron") == "SHEBA-TAU-1680 ***"
+
+
+def test_mask_handles_this_repos_order_number_shapes():
+    """GH #16: order numbers here are 'Order_…', not digits — the mask must
+    still catch the name that follows them."""
+    assert mask_lcc_number("SHEB-TAU-Order_9 David Levi") == "SHEB-TAU-Order_9 ***"
+    assert (mask_lcc_number("SHEB-TAU-Order_Num_24586 Some Patron")
+            == "SHEB-TAU-Order_Num_24586 ***")
+
+
+def test_mask_leaves_nameless_conventions_intact():
+    assert mask_lcc_number("BEIL248; 20233913") == "BEIL248; 20233913"
+    assert mask_lcc_number("IC2055") == "IC2055"
+
+
+def test_mask_handles_empty():
+    assert mask_lcc_number("") == ""
+    assert mask_lcc_number(None) == ""

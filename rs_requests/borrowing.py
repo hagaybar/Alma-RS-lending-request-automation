@@ -18,6 +18,7 @@ from almaapitk import AlmaAPIError, build_user_rs_request
 
 from rs_requests.base import BuiltRequest, RequestBuilder
 from rs_requests.errors import BorrowingValidationError
+from rs_requests.pii import mask_lcc_number
 
 
 #: DECISION 2026-07-22 — articles only. CR is the librarians' UI value and
@@ -115,6 +116,11 @@ class BorrowingRequestBuilder(RequestBuilder):
                 order_number=order_number,
                 patron_name=(form_data.get("patron_name") or "").strip(),
             ).strip()
+            self.processor._log_pii(
+                logging.DEBUG,
+                f"  lcc_number: {extra['lcc_number']}",
+                f"  lcc_number: {mask_lcc_number(extra['lcc_number'])}",
+            )
 
         # Deliberately NOT sent — see docs/BORROWING_REQUESTS.md:
         #   external_id   Alma discards the client value and substitutes a

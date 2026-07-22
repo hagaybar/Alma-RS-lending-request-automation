@@ -66,6 +66,10 @@ from rs_requests.errors import (
     BorrowingValidationError,
 )
 
+# PII masking for lcc_number lives in rs_requests.pii; re-exported here so
+# tests can import from the processor (just like mask_user_id).
+from rs_requests.pii import mask_lcc_number
+
 
 def mask_user_id(user_id: Optional[str]) -> str:
     """Mask a patron identifier for safe console display.
