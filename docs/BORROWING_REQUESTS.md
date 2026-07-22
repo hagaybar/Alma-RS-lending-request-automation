@@ -1,8 +1,10 @@
 # Borrowing Requests — Project Guidebook
 
-> Status: **reference document, pre-implementation.** Written 2026-07-20.
-> Every claim below is tagged with how it is known. Do not promote an
-> `INFERRED` or `OPEN` line to a design decision without testing it.
+> Status: **reference document, pre-implementation.** Written 2026-07-20;
+> updated 2026-07-22 with live upstream evidence (§9) and the articles-only
+> scope decision (§4.3). Every claim below is tagged with how it is known.
+> Do not promote an `INFERRED` or `OPEN` line to a design decision without
+> testing it.
 
 ## 1. What a borrowing request is, and how it differs from lending
 
@@ -113,10 +115,25 @@ The Alma code table `ReadingListCitationTypes` contains `BK`, `CR`, `E_BK`,
 It never appears in production because **the librarians' UI only offers `CR`
 and `BK`.** `VERIFIED` by the operator, and consistent with 1912/1912 records.
 
-> ⚠️ `~/.claude/skills/alma-api-expert/references/resource_sharing_api.md`
-> currently records a decision to prefer `E_CR` for born-digital articles.
-> That was reasoned from a one-off sanity check and is **contradicted by 1912
-> real requests.** It needs correcting; see §7.
+#### 2026-07-22: `E_CR` also loses metadata at persist
+
+An upstream A/B probe (AlmaAPITK session, two bodies identical but for the
+citation type — §9) settled it beyond convention: `E_CR` is accepted at
+create and *validates* the journal fields, but **discards `journal_title`,
+`issue`, `doi`, `pmid` at persist** (empty on JSON GET, XML GET and in the
+placeholder bib; `volume` misfiled into the bib's `490$v`). `CR` persists
+everything and triggers Alma's citation enrichment (ISSN added unprompted,
+full `773` host item, DOI/PMID in `856`). `CR` is not just the census
+convention — it is the only citation type that keeps our metadata.
+`VERIFIED` live 2026-07-22.
+
+#### Scope decision 2026-07-22 — articles only
+
+This pipeline creates **`CR` + `DIGITAL`** requests exclusively (operator
+decision). `BK` is out of scope: the upstream session found `PHYSICAL`+`BOOK`
+reproducibly returns a raw HTTP 500 in SANDBOX (AlmaAPITK #207 — whether the
+culprit is `PHYSICAL`, `BOOK`, or the pair is undetermined), and no book
+recipe has been proven live. Revisit only with a proven SANDBOX recipe.
 
 ### 4.4 Bibliographic fields
 
@@ -178,7 +195,10 @@ There are **two**, and they are unrelated:
   sample. `OPEN`: yesterday's SANDBOX recipe sent `true`, and the skill file
   records it as "mandatory TRUE for borrowing". Real data contradicts that.
   Whether Alma *requires* `true` at create but does not persist it is exactly
-  what test `T-04` in the test matrix settles.
+  what test `T-04` in the test matrix settles. (2026-07-22: the upstream
+  `build_user_rs_request` defaults it to `True` — a third voice in the
+  contradiction, GH #31. Our code passes the config value explicitly, so
+  that default never applies.)
 - **`copyright_status`** — an internal Alma copyright mechanism that **is not
   used here** (`VERIFIED` by the operator; empty in 100/100). **Omit.**
 
@@ -212,7 +232,8 @@ There are **two**, and they are unrelated:
 ## 6. What is still unverified
 
 Nothing below can be resolved by reading. Each needs a SANDBOX create; see
-`docs/BORROWING_SB_TEST_MATRIX.md`.
+`docs/BORROWING_SB_TEST_MATRIX.md` (and §9 for what the 2026-07-22 upstream
+session already settled).
 
 1. **Which fields are settable at create.** Every field in §4 is confirmed on
    GET only. `requested_media`, `specific_edition`, `lcc_number`, `maximum_fee`
@@ -223,14 +244,18 @@ Nothing below can be resolved by reading. Each needs a SANDBOX create; see
    like the manual ones once the rota has run.
 4. ~~**Whether the almaapitk floor pinned in `pyproject.toml` exposes
    `create_user_rs_request` at all.**~~ `SETTLED` 2026-07-20: the installed
-   0.4.6 exposes all three RS methods with matching signatures; Task 0's
-   contract test passes against it.
+   0.4.6 exposes all three RS methods. **Superseded 2026-07-22:** the plan
+   now builds the body with `almaapitk.build_user_rs_request`, absent
+   through 0.4.6 — plan Task 0 raises the floor to the release that ships
+   it (expected 0.5.0) and is blocked until that release is on PyPI (§9).
 
 ## 7. Follow-up outside this repo
 
-- Correct the `E_CR` recommendation in
-  `~/.claude/skills/alma-api-expert/references/resource_sharing_api.md` — it is
-  contradicted by 1912 real requests (§4.3).
+- ~~Correct the `E_CR` recommendation in
+  `~/.claude/skills/alma-api-expert/references/resource_sharing_api.md`.~~
+  **Done upstream 2026-07-22** — the skill file now records "use `CR`, not
+  `E_CR`" with the A/B persistence evidence (§9), in section "Borrowing
+  create — observed behavior (SB 2026-07-22)".
 - Correct "`agree_to_copyright_terms` … mandatory TRUE for borrowing" in the
   same file to reflect the 98/100 `false` observation, pending `T-04`.
 
@@ -288,3 +313,48 @@ file as `duplicate` (success-like) and moves it to `processed/`.
 - Note for any future list-based reconcile: there is **no GET-collection**
   endpoint for user RS requests (§5); enumeration goes through
   `/users/{id}/requests` and its nested `resource_sharing` block.
+
+## 9. Upstream evidence — 2026-07-22 (AlmaAPITK `rs-borrowing-ergonomics`)
+
+The AlmaAPITK session of 2026-07-22 (PR #206 merged to its `main`, closing
+its issues #197/#194; 5/5 SANDBOX tests green) ran live creates this project
+inherits as evidence. All `VERIFIED` live unless noted.
+
+- **`build_user_rs_request` exists upstream.** Pure, network-free body
+  builder exported at the package root; encodes the §4.1 plain-vs-wrapped
+  asymmetry once. A body produced entirely by it was accepted on a live
+  create round-trip (build → create → GET). **Unreleased at the time of
+  writing** — PyPI's latest is 0.4.6; this project's plan gates on the
+  0.5.0 release (plan Task 0).
+- **`create_user_rs_request(..., validate=True)`** — new opt-in pre-flight
+  check of `format` / `citation_type` / `pickup_location_type` against
+  documented borrowing codes; raises `AlmaValidationError` naming the field
+  before any HTTP. Off by default (tables are tenant-extensible).
+- **`DIGITAL`+`CR` proven; `PHYSICAL`+`BOOK` 500s.** The originally
+  prescribed PHYSICAL+BOOK body hit a reproducible **raw HTTP 500** (no
+  alma_code) across every owner/pickup combination, minimal body, with and
+  without `external_id`. Whether the culprit is PHYSICAL, BOOK, or the pair
+  is undetermined — AlmaAPITK #207 tracks the decomposition.
+- **`E_CR` discards metadata at persist** (A/B probe, §4.3): journal_title,
+  issue, doi, pmid empty after create; volume misfiled into the bib's
+  `490$v`. `CR` persists everything and triggers citation enrichment.
+  Requests `39940272600004146` (E_CR) / `39940273040004146` (CR).
+- **`401930` confirmed live:** `journal_title` + `year` (with `author`)
+  mandatory for a `DIGITAL` article.
+- **`external_id` non-persistence re-confirmed** on the hospital-format demo
+  (sent `"99990001"`, came back empty on GET) — independent confirmation of
+  §8.1. Note the upstream builder's docstring still pitches `external_id` as
+  an idempotency key; for this surface that is wrong.
+- **Pickup validity is per-owner** (`401929` when the pickup library is not
+  configured for that owner); pickup may equal owner — `AM1`/`AM1` works.
+- **Error surfacing (ships with the same release):** Alma's unrenderable
+  `Invalid field value … {1}` 400 gains an `[almaapitk hint: …]` suffix
+  naming the likely field; `401890` maps to `AlmaResourceNotFoundError`
+  despite arriving as HTTP 400; the `40166411` code collision is resolved
+  endpoint-scoped. This repo's `402362` duplicate match keys on alma_code /
+  message substring and is unaffected.
+- **Four requests were left in SANDBOX deliberately** (owner/pickup `AM1`,
+  upstream operator override — left for inspection): `39940272600004146`,
+  `39940273040004146`, `39940273500004146` (chunk test),
+  `39940276180004146` (hospital-format demo). They are **not** this
+  project's leftovers; see the matrix cleanup log before touching them.

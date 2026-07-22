@@ -2,6 +2,10 @@
 
 > **Nothing in this file has been executed.** These are proposed requests.
 > Every payload targets the Alma **SANDBOX** only.
+>
+> **Updated 2026-07-22:** T-03 dropped (articles-only scope), T-05
+> effectively settled and T-06 downgraded by the upstream AlmaAPITK session
+> (guidebook §9); T-09 extended with the TOU-limits question (GH #32).
 
 ## Rules for every test below
 
@@ -46,6 +50,11 @@ BASE = {
 
 **Settles:** the smallest body Alma accepts for a `CR` + `DIGITAL` article.
 Everything else is measured as a delta from this.
+
+> 2026-07-22: this shape (DIGITAL+CR with journal_title/author/year) was
+> already accepted live upstream with a `build_user_rs_request`-produced
+> body (guidebook §9). T-01 stays as the cheap first check that **our**
+> config and payload reproduce it.
 
 **User:** `SHEB` · **Expect:** HTTP 200 + `request_id`, in ~3s.
 
@@ -104,10 +113,14 @@ against what was sent. **Anything that vanishes is output-only.**
 **Record for each field:** sent → returned → verdict (`settable` /
 `dropped` / `transformed`). This table becomes the authority for the builder.
 
-### T-03 — Book chapter (`BK` + `DIGITAL`)
+### T-03 — Book chapter (`BK` + `DIGITAL`) — ❌ **DROPPED 2026-07-22 (out of scope)**
 
-**Settles:** that `BK` is accepted with `DIGITAL`, and which fields a book
-request needs (the article trio may not apply).
+Articles-only decision (guidebook §4.3): the pipeline creates `CR`+`DIGITAL`
+requests exclusively, and the builder rejects `BK` before any API call.
+**Do not run.** Background: `PHYSICAL`+`BOOK` reproducibly 500s in SANDBOX
+(AlmaAPITK #207, culprit undetermined) and no book recipe is proven live.
+The payload below is kept only as the starting point if book support ever
+returns to scope.
 
 **User:** `BEIL` · **Expect:** HTTP 200. If it fails with `401930`, the
 mandatory-field rule differs for books — record which fields it names.
@@ -132,7 +145,8 @@ mandatory-field rule differs for books — record which fields it names.
 
 **Settles:** the §4.6 contradiction — the field is `false` on 98/100 real
 requests, but our 2026-07-19 recipe sent `true` and the skill file calls it
-mandatory.
+mandatory. (2026-07-22, GH #31: the upstream builder now defaults `True` —
+a third voice. The contradiction stands; this test still decides.)
 
 Run three creates, identical but for this one field:
 
@@ -154,10 +168,15 @@ Run three creates, identical but for this one field:
 - Then `GET` all three and record what each **persisted** — a create may accept
   `true` and store `false`.
 
-### T-05 — Missing article fields (negative)
+### T-05 — Missing article fields (negative) — ✅ **effectively SETTLED 2026-07-22**
 
 **Settles:** that the `401930` rule still holds, so our validation can fail
 fast locally instead of paying a round trip.
+
+> The upstream session confirmed it live: `journal_title` + `year` (with
+> `author`) are mandatory for a `DIGITAL` article — Alma error `401930`
+> (guidebook §9). Local validation already enforces the trio. Optional
+> re-run with our exact body; not a gate.
 
 **User:** `SHEB` · **Expect:** HTTP 400, `alma_code 401930`, message naming
 Journal Title / Publication Date / Author.
@@ -173,10 +192,16 @@ Journal Title / Publication Date / Author.
 }
 ```
 
-### T-06 — Wrong wrapper on `owner` (negative)
+### T-06 — Wrong wrapper on `owner` (negative) — ⬇ **downgraded 2026-07-22 (optional)**
 
 **Settles:** confirms the plain-vs-wrapped asymmetry, and gives us the exact
 error string to match on for a helpful local message.
+
+> With the body built by `almaapitk.build_user_rs_request` (>= 0.5.0) the
+> wrapper mistake can no longer be produced by our code, and the upstream
+> session verified the error surface live (wrong-table code → 400 with an
+> `[almaapitk hint: …]` naming the field — guidebook §9). Optional; not a
+> gate.
 
 **User:** `SHEB` · **Expect:** HTTP 400 `BAD_REQUEST`, "Cannot construct
 instance of … UserResourceSharingRequest".
@@ -240,6 +265,14 @@ One minimal T-01-shaped create for each of `ASAF`, `BEIL`, `IC`, `LE`, `ME`,
 **Note:** `LE` and `SHH` have very low volume (43 and 8 census records) — they
 are the most likely to be misconfigured.
 
+**Extension (GH #32, 2026-07-22):** creation succeeding once per user does
+not probe **velocity limits** — Alma's per-patron "Active Resource Sharing
+Requests Limit" / "Yearly Requests Limit" TOU checks. Each hospital funnels
+its entire volume through one proxy account, and `submit()` never passes
+`override_blocks`, so a hospital at its limit fails every create until
+requests complete. While running T-09, ask the RS librarians for the 8
+accounts' TOU limits and have them raised if needed **before go-live**.
+
 ---
 
 ## 2. End-to-end tests (after the pipeline is wired)
@@ -265,14 +298,15 @@ must pass **before** any borrowing test is run live.
 
 ## 3. Suggested order
 
+*(revised 2026-07-22 — T-03 dropped, T-08 settled, T-05/T-06 optional)*
+
 1. **T-12** (lending unharmed) — gate everything on this.
 2. **T-01** (baseline works at all).
-3. **T-02** (settability) — rewrites the builder's field list.
-4. **T-04** (copyright) — decides one config default.
-5. **T-05, T-06** (negatives) — cheap, improve local validation.
-6. **T-03** (books), **T-07** (`lcc_number`), **T-09** (all users).
-7. **T-08** (duplicate) — last, since it deliberately creates a conflict.
-8. **T-10 / T-11** end-to-end.
+3. **T-02** + **T-02b** (settability) — rewrites the builder's field list.
+4. **T-04** (copyright) — decides one config default (GH #31).
+5. **T-07** (`lcc_number`), **T-09** incl. the TOU-limits question (GH #32).
+6. *(optional)* **T-05, T-06** — effectively settled/downgraded, see each.
+7. **T-10 / T-11** end-to-end.
 
 ## 4. Cleanup log
 
@@ -285,6 +319,13 @@ Fill in as tests are run. **A request created and not cancelled is a defect.**
 
 Outstanding from 2026-07-19 (created before this matrix existed, still not
 cleaned up): `39940155760004146`, `39940156450004146`, `39940157570004146`.
+
+**Upstream leftovers — not ours, do not "clean up" (2026-07-22):** the
+AlmaAPITK session deliberately left four requests in SANDBOX for inspection
+(owner/pickup `AM1`, operator override): `39940272600004146` (E_CR A/B),
+`39940273040004146` (CR A/B), `39940273500004146` (chunk test),
+`39940276180004146` (hospital-format demo). Cancel only after the AlmaAPITK
+side is done with them.
 
 ### T-02b — Real-identifier augmentation diff (GH #33)
 

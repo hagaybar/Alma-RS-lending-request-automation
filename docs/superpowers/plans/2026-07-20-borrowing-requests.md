@@ -8,14 +8,22 @@
 
 **Tech Stack:** Python 3.12, Poetry, pytest, `almaapitk` (Alma REST client), PubMed E-utilities / Crossref for citation metadata.
 
-**Reference:** `docs/BORROWING_REQUESTS.md` is the authority for every field value. `docs/BORROWING_SB_TEST_MATRIX.md` lists the SANDBOX tests that close its open questions.
+**Reference:** `docs/BORROWING_REQUESTS.md` is the authority for every field value (§9 records the 2026-07-22 upstream live evidence). `docs/BORROWING_SB_TEST_MATRIX.md` lists the SANDBOX tests that close its open questions.
+
+> **Revised 2026-07-22:** scope narrowed to DIGITAL+CR articles; body building
+> moved to `almaapitk.build_user_rs_request` (merged upstream in PR #206,
+> gated on the 0.5.0 release); `401604` policy decided. Guidebook §9 has the
+> upstream evidence behind every change.
 
 ## Global Constraints
 
 - Python `^3.12`, dependencies via Poetry. `package-mode = false` — the repo runs from its root, so `rs_requests/` is imported as a plain top-level package.
-- **Do not use `almaapitk.build_user_rs_request`.** It exists only on the unmerged `chunk/rs-borrowing-ergonomics` branch of AlmaAPITK and is in no released version. We build the request dict ourselves.
-- The only toolkit call for borrowing is `Users.create_user_rs_request(user_id, request_data, user_id_type=None, override_blocks=None) -> AlmaResponse`. It forwards `request_data` to Alma **verbatim** — correct field shapes are entirely our responsibility.
-- `owner` is a **plain string**; `pickup_location`, `format`, `citation_type` are **wrapped** as `{"value": ...}`. This asymmetry is the most common cause of `BAD_REQUEST`.
+- **Scope — articles only: `citation_type=CR` + `format=DIGITAL` (DECISION 2026-07-22).** The book path (`BK`) is out of scope: `PHYSICAL`+`BOOK` creates reproducibly 500 in SANDBOX (AlmaAPITK #207, culprit undetermined), the census shows zero `E_CR`/`E_BK`, and the 2026-07-22 A/B probe showed `E_CR` discards metadata at persist (guidebook §9). `DIGITAL`+`CR` is the live-proven shape.
+- **Build the body with `almaapitk.build_user_rs_request(...)` — REQUIRES almaapitk >= 0.5.0.** Merged to AlmaAPITK `main` 2026-07-22 (PR #206) and live-proven in SANDBOX, but **unreleased at plan-revision time** (PyPI latest: 0.4.6). Task 0 raises the floor and is BLOCKED until the release ships; Tasks 1–4 do not touch the new surface. The builder is exported at package root and encodes the plain-vs-`{"value": ...}` wrapping rules exactly once, upstream.
+- The submit call is `Users.create_user_rs_request(user_id, request_data, user_id_type=None, override_blocks=None, *, validate=False) -> AlmaResponse`. It forwards `request_data` to Alma **verbatim**; pass **`validate=True`** so a wrong code-table value fails locally, before any HTTP, with an `AlmaValidationError` naming the field.
+- `owner` is a **plain string**; `pickup_location`, `format`, `citation_type` are **wrapped** as `{"value": ...}`. The builder hides this asymmetry; it stays documented because fields passed through its `extra` dict must still respect it (the builder wraps known code-table fields in `extra` and passes everything else through untouched).
+- Mandatory for a `DIGITAL` article: `title`, `journal_title`, `year` (plus `author` per the 401930 message) — confirmed live 2026-07-22. Validate locally so a bad file fails before any network call.
+- **`401604` policy (DECISION 2026-07-22): never pass `override_blocks`.** When Alma answers `401604` ("institutional inventory has services for the requested title"), the create fails as a normal error row for manual handling. Power Automate's holdings fork makes this rare; auto-overriding could create borrowing requests for items we hold.
 - **Dry-run by default.** `--live` must be passed explicitly for any API call.
 - **SANDBOX only** for all testing. `AlmaAPIClient("SANDBOX")` reads `ALMA_SB_API_KEY` from the environment. Never place a key on a command line, never print one.
 - **Duplicate safety is Alma-side — DECISION 2026-07-20 (GH #35).** A timed-out
@@ -30,7 +38,7 @@
   in PRODUCTION config.** Accepted residual risk (user decision): a retry
   whose rebuilt body differs (metadata drift between runs) could escape the
   check — judged low-probability.
-- `agree_to_copyright_terms` and `lcc_number` content are **OPEN questions** (guidebook §4.6, §4.5). Both must be config-driven with a documented default, never hardcoded, so the answers land in config without a code change.
+- `agree_to_copyright_terms` and `lcc_number` content are **OPEN questions** (guidebook §4.6, §4.5). Both must be config-driven with a documented default, never hardcoded, so the answers land in config without a code change. (2026-07-22: the upstream builder defaults the copyright flag to `True` — a third voice in the T-04 contradiction. Our code always passes the config value explicitly, so the builder default never applies.)
 - **PII:** `lcc_number` carries a patron's name. It must be masked on console output using the existing `PiiConsoleFilter` / `_log_pii` mechanism, exactly as `user_id` already is.
 - The lending path is **live production code** running on `masedet` via Task Scheduler. `tests/test_l2_citation_golden.py` must stay green at every commit.
 - Branch discipline: work on `feature/borrowing-requests`, merge to `main` only. **Never commit to `prod`.** A merge to `prod` reaches production unattended on the next scheduled deploy run.
@@ -43,10 +51,10 @@
 | `rs_requests/base.py` | `BuiltRequest` dataclass + `RequestBuilder` ABC + `get_builder()` dispatch |
 | `rs_requests/metadata.py` | `fetch_citation_metadata()` — thin adapter over the toolkit's PubMed/Crossref helpers, normalising to one internal dict |
 | `rs_requests/lending.py` | `LendingRequestBuilder` — the existing lending behaviour, moved verbatim |
-| `rs_requests/borrowing.py` | `BorrowingRequestBuilder` — the new borrowing payload + submit |
+| `rs_requests/borrowing.py` | `BorrowingRequestBuilder` — validation + `almaapitk.build_user_rs_request` body + submit |
 | `resource_sharing_forms_processor.py` | Pipeline only; delegates the terminal step to a builder |
 | `config/rs_forms_config.example.json` | Gains a `borrowing` block |
-| `tests/test_borrowing_toolkit_contract.py` | Guards the almaapitk dependency floor |
+| `tests/test_borrowing_toolkit_contract.py` | Guards the almaapitk floor (>= 0.5.0: builder + `validate=` pre-flight) |
 | `tests/test_lending_characterization.py` | Pins lending behaviour before the refactor |
 | `tests/test_builder_dispatch.py` | Folder → builder routing |
 | `tests/test_borrowing_tsv.py` | Borrowing TSV parsing |
@@ -55,81 +63,105 @@
 
 ---
 
-### Task 0: Guard the almaapitk dependency floor
+### Task 0: Raise the almaapitk floor to the builder release
 
-The repo pins `almaapitk = ">=0.4.6"`. The user resource-sharing methods post-date the 0.4.5 release, so it is **unverified** that the pinned floor exposes them. If it does not, every later task is built on sand.
+The repo pins `almaapitk = ">=0.4.6"`. The borrowing body is built by
+`almaapitk.build_user_rs_request`, which was merged upstream on 2026-07-22
+(PR #206) but is **absent from every PyPI release through 0.4.6**. This task
+raises the floor to the first release that ships it (expected **0.5.0** —
+the operator is preparing that release and will announce it).
+
+> **⛔ BLOCKED until that release is on PyPI.** Tasks 1–4 do not touch the
+> new surface and can run first; Tasks 5+ depend on this task. Do not pin a
+> git ref as a workaround — masedet installs from PyPI (see
+> `docs/almaapitk-audit.md` for the bump gate used for 0.4.5→0.4.6).
 
 **Files:**
 - Test: `tests/test_borrowing_toolkit_contract.py` (create)
-- Modify: `pyproject.toml` (only if the assertion fails)
+- Modify: `pyproject.toml`, `poetry.lock`
 
 **Interfaces:**
 - Consumes: nothing
-- Produces: a proven floor for `Users.create_user_rs_request`
+- Produces: a proven floor for `almaapitk.build_user_rs_request` and the `validate=` pre-flight on `Users.create_user_rs_request`
 
 - [ ] **Step 1: Write the failing test**
 
 ```python
-"""Guard: the pinned almaapitk must expose the borrowing create surface."""
+"""Guard: the pinned almaapitk must ship the borrowing build+create surface.
+
+The floor is the first release carrying build_user_rs_request (expected
+0.5.0 — merged upstream 2026-07-22, PR #206; absent through 0.4.6).
+"""
 import inspect
 
 # Import from the top-level surface — the package declares it "the ONLY
 # supported public API"; internal module paths may move without notice (GH #34).
-from almaapitk import Users
+from almaapitk import Users, build_user_rs_request
 
 
-def test_users_exposes_create_user_rs_request():
-    assert hasattr(Users, "create_user_rs_request"), (
-        "The pinned almaapitk has no Users.create_user_rs_request. "
-        "Raise the floor in pyproject.toml to the first release that ships it."
-    )
+def test_build_user_rs_request_is_exported():
+    sig = inspect.signature(build_user_rs_request)
+    # The three positional identity fields of a borrowing body.
+    assert list(sig.parameters)[:3] == ["owner", "format", "citation_type"]
+    assert "agree_to_copyright_terms" in sig.parameters
+    assert "extra" in sig.parameters
 
 
-def test_create_user_rs_request_signature_is_stable():
+def test_create_user_rs_request_has_the_validate_preflight():
     sig = inspect.signature(Users.create_user_rs_request)
     assert list(sig.parameters) == [
         "self", "user_id", "request_data", "user_id_type", "override_blocks",
+        "validate",
     ]
+    assert sig.parameters["validate"].kind is inspect.Parameter.KEYWORD_ONLY
 
 
-def test_get_user_rs_request_supports_external_lookup():
-    """Reconciling a timed-out create depends on request_id_type='external'."""
-    sig = inspect.signature(Users.get_user_rs_request)
-    assert "request_id_type" in sig.parameters
+def test_get_user_rs_request_exists_for_the_matrix_diff():
+    """The SANDBOX harness GETs the created request to diff settability
+    (matrix T-02). NOT used for reconcile — that is impossible (GH #14)."""
+    assert hasattr(Users, "get_user_rs_request")
 ```
 
-- [ ] **Step 2: Run it**
+- [ ] **Step 2: Run it to verify it fails against the old floor**
 
 Run: `poetry run pytest tests/test_borrowing_toolkit_contract.py -v`
+Expected against 0.4.6: FAIL at collection —
+`ImportError: cannot import name 'build_user_rs_request' from 'almaapitk'`.
+That failure is the proof the floor must move.
 
-Two outcomes, both informative:
-- **PASS** — the floor is fine. Go to Step 4.
-- **FAIL** on `hasattr` — the floor is too low. Go to Step 3.
+- [ ] **Step 3: Raise the floor**
 
-- [ ] **Step 3: Raise the floor (only if Step 2 failed)**
-
-Find the first released version exposing the method:
+First confirm the release is actually live (this is the task's blocking gate):
 
 ```bash
 poetry run pip index versions almaapitk
 ```
 
-Then in `pyproject.toml`, replace the `almaapitk = ">=0.4.6"` line, keeping the existing comment block above it and appending:
+If the newest version listed is still 0.4.6, **stop here** — the task is
+blocked, not failed. Otherwise, in `pyproject.toml`, replace the
+`almaapitk = ">=0.4.6"` line, keeping the existing comment block above it and
+appending:
 
 ```toml
-# Raised to >=X.Y.Z: the user resource-sharing methods
-# (Users.create_user_rs_request / get_user_rs_request) are absent below this.
-# Borrowing support cannot function on an older floor.
-almaapitk = ">=X.Y.Z"
+# Raised to >=0.5.0: build_user_rs_request and the validate= pre-flight on
+# Users.create_user_rs_request are absent below this (merged upstream
+# 2026-07-22, PR #206). Borrowing support cannot function on an older floor.
+almaapitk = ">=0.5.0"
 ```
 
-Then `poetry lock && poetry install` and re-run Step 2.
+Then `poetry lock && poetry install`.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Run the test to verify it passes**
+
+Run: `poetry run pytest tests/test_borrowing_toolkit_contract.py -v`
+Expected: PASS (3 tests). Also run the full suite (`poetry run pytest -q`) —
+the bump must not disturb the lending path's golden test.
+
+- [ ] **Step 5: Commit**
 
 ```bash
 git add tests/test_borrowing_toolkit_contract.py pyproject.toml poetry.lock
-git commit -m "test: guard almaapitk floor for borrowing request support"
+git commit -m "test: raise almaapitk floor to 0.5.0 for the borrowing build surface"
 ```
 
 ---
@@ -689,6 +721,7 @@ Append to the `notes` array:
 
 ```json
     "borrowing.enabled: master switch; false means borrowing files are ignored entirely",
+    "borrowing scope (DECISION 2026-07-22): articles only — CR + DIGITAL. A material_type other than CR is rejected before any API call",
     "borrowing.agree_to_copyright_terms: OPEN — 98/100 real requests store false; confirm with SB test T-04 before changing",
     "borrowing.lcc_number_template: OPEN — pending the librarians. Placeholders: {hospital} {order_number} {patron_name}. Empty means omit the field",
     "borrowing.allowed_hospitals: proxy user codes; a file naming any other requestor is rejected before any API call"
@@ -913,14 +946,17 @@ git commit -m "feat: parse borrowing TSV with config-driven column positions"
 
 ### Task 5: Build the borrowing payload
 
-The core of the work. Every value traces to `docs/BORROWING_REQUESTS.md` §4.
+The core of the work. Every value traces to `docs/BORROWING_REQUESTS.md` §4
+and §9. The body itself is assembled by `almaapitk.build_user_rs_request`
+(Task 0's floor) — this builder owns *what* to send; the toolkit owns *how*
+to shape it.
 
 **Files:**
 - Create: `rs_requests/metadata.py`, `rs_requests/borrowing.py`
 - Test: `tests/test_borrowing_builder.py` (create)
 
 **Interfaces:**
-- Consumes: `BuiltRequest`, `RequestBuilder` (Task 2); `read_borrowing_tsv_file` output (Task 4)
+- Consumes: `BuiltRequest`, `RequestBuilder` (Task 2); `read_borrowing_tsv_file` output (Task 4); `almaapitk.build_user_rs_request` (Task 0, >= 0.5.0)
 - Produces:
   - `fetch_citation_metadata(identifier: str, id_type: str) -> Dict[str, str]` with keys `title, author, journal, year, volume, issue, pages, start_page, end_page, issn, isbn, doi, pmid, publisher`
   - `BorrowingRequestBuilder.build(form_data, metadata) -> BuiltRequest`
@@ -1009,17 +1045,18 @@ def test_defaults_to_digital_article():
     assert p["citation_type"] == {"value": "CR"}
 
 
-def test_material_type_bk_selects_book_and_stays_digital():
-    p = _build(form={"material_type": "BK"}).payload
-    assert p["citation_type"] == {"value": "BK"}
-    assert p["format"] == {"value": "DIGITAL"}   # books are scanned, not loaned
-    # GH #18: for a chapter DOI, Crossref's container-title is the BOOK —
-    # a book request must not carry it as journal_title.
-    assert "journal_title" not in p
+def test_material_type_bk_is_rejected():
+    """DECISION 2026-07-22: articles only. BK is out of scope until the
+    PHYSICAL+BOOK SANDBOX 500 (AlmaAPITK #207) is decomposed and a book
+    recipe is proven live."""
+    with pytest.raises(BorrowingValidationError, match="out of scope"):
+        _build(form={"material_type": "BK"})
 
 
 def test_rejects_electronic_citation_codes():
-    """E_CR/E_BK are accepted by Alma but appear in 0 of 1912 real requests."""
+    """E_CR is accepted at create but DISCARDS journal_title/issue/doi/pmid
+    at persist (A/B probe 2026-07-22, guidebook §9) — and appears in 0 of
+    1912 real requests."""
     with pytest.raises(BorrowingValidationError, match="E_CR"):
         _build(form={"material_type": "E_CR"})
 
@@ -1075,6 +1112,7 @@ class _FakeUsers:
 
     def create_user_rs_request(self, user_id, request_data, **kw):
         self.creates += 1
+        self.last_kwargs = kw
         raise self.exc
 
 
@@ -1108,11 +1146,14 @@ def test_other_api_errors_reraise():
     with pytest.raises(AlmaAPIError):
         _builder_with(users).submit(_build())
     assert users.creates == 1        # never internally retried
+    # The opt-in pre-flight (almaapitk >= 0.5.0) must be on for every create.
+    assert users.last_kwargs.get("validate") is True
 
 
 def test_transport_timeout_reraises_for_the_next_scheduled_run():
-    """almaapitk 0.4.6 does not wrap transport errors (GH #9); a socket
-    timeout must propagate. The file then stays in input, the next run
+    """almaapitk does not wrap transport errors (GH #9; re-verified on the
+    2026-07-22 main); a socket timeout must propagate. The file then stays
+    in input, the next run
     re-POSTs, and if this create actually saved Alma rejects it 402362 —
     which the duplicate branch converts to done."""
     users = _FakeUsers(exc=requests.exceptions.ReadTimeout("read timed out"))
@@ -1212,9 +1253,13 @@ def fetch_citation_metadata(identifier: str, id_type: str) -> Dict[str, str]:
 ```python
 """Borrowing (user resource-sharing) request builder.
 
-Every constant here traces to docs/BORROWING_REQUESTS.md §4, which was
-derived from 1912 real SANDBOX requests (100 read in full). Do not change a
-value without updating that document and the evidence behind it.
+Field values trace to docs/BORROWING_REQUESTS.md §4 (1912 real SANDBOX
+requests, 100 read in full) and §9 (live upstream evidence, 2026-07-22). Do
+not change a value without updating that document and the evidence behind it.
+
+The wire shape is assembled by almaapitk.build_user_rs_request (>= 0.5.0),
+which encodes Alma's plain-vs-{"value": ...} wrapping rules once, upstream.
+This module owns WHAT to send; the toolkit owns HOW to shape it.
 """
 from __future__ import annotations
 
@@ -1222,7 +1267,7 @@ import logging
 import re
 from typing import Any, Dict, Optional
 
-from almaapitk import AlmaAPIError
+from almaapitk import AlmaAPIError, build_user_rs_request
 
 from rs_requests.base import BuiltRequest, RequestBuilder
 
@@ -1231,14 +1276,12 @@ class BorrowingValidationError(Exception):
     """Raised before any API call when the request cannot be valid."""
 
 
-#: The librarians' UI offers only these two. E_CR/E_BK are accepted by Alma
-#: but appear in 0 of 1912 real requests — sending them would silently
-#: diverge from every manually created request.
-ALLOWED_CITATION_TYPES = ("CR", "BK")
-
-#: Article citation types additionally require journal_title + author + year,
-#: else Alma returns alma_code 401930.
-ARTICLE_CITATION_TYPES = ("CR",)
+#: DECISION 2026-07-22 — articles only. CR is the librarians' UI value and
+#: the live-proven shape (DIGITAL+CR, guidebook §9). BK is out of scope
+#: (PHYSICAL+BOOK reproducibly 500s in SANDBOX — AlmaAPITK #207); E_CR is
+#: accepted at create but DISCARDS journal_title/issue/doi/pmid at persist
+#: (A/B probe 2026-07-22) and appears in 0 of 1912 real requests.
+ALLOWED_CITATION_TYPES = ("CR",)
 
 
 class BorrowingRequestBuilder(RequestBuilder):
@@ -1254,24 +1297,26 @@ class BorrowingRequestBuilder(RequestBuilder):
                          or cfg.get("default_citation_type", "CR")).upper()
         if citation_type not in ALLOWED_CITATION_TYPES:
             raise BorrowingValidationError(
-                f"citation_type {citation_type!r} is not offered by the "
-                f"librarians' UI and appears in 0 of 1912 real requests. "
-                f"Allowed: {', '.join(ALLOWED_CITATION_TYPES)}."
+                f"citation_type {citation_type!r} is out of scope: this "
+                f"pipeline creates DIGITAL article requests only "
+                f"(DECISION 2026-07-22). Allowed: "
+                f"{', '.join(ALLOWED_CITATION_TYPES)}."
             )
 
         title = meta.get("title", "").strip()
         if not title:
             raise BorrowingValidationError("citation metadata has no title")
 
-        if citation_type in ARTICLE_CITATION_TYPES:
-            missing = [name for name, key in
-                       (("journal_title", "journal"), ("author", "author"), ("year", "year"))
-                       if not meta.get(key, "").strip()]
-            if missing:
-                raise BorrowingValidationError(
-                    f"an article request requires {', '.join(missing)} "
-                    f"(Alma returns alma_code 401930 without them)"
-                )
+        # Every request is an article — the trio is unconditionally
+        # mandatory (Alma 401930, confirmed live 2026-07-22).
+        missing = [name for name, key in
+                   (("journal_title", "journal"), ("author", "author"), ("year", "year"))
+                   if not meta.get(key, "").strip()]
+        if missing:
+            raise BorrowingValidationError(
+                f"an article request requires {', '.join(missing)} "
+                f"(Alma returns alma_code 401930 without them)"
+            )
 
         hospital = form_data["requestor"]
         order_number = (form_data.get("order_number") or "").strip()
@@ -1292,61 +1337,70 @@ class BorrowingRequestBuilder(RequestBuilder):
         if order_number:
             external_id = f"{external_id}-{order_number}"
 
-        # --- constants: 100/100 in the verified sample -------------------
-        payload: Dict[str, Any] = {
-            "owner": cfg.get("owner", "AM1"),                            # plain
-            "pickup_location": {"value": cfg.get("pickup_location", "AM1")},
-            "pickup_location_type": cfg.get("pickup_location_type", "LIBRARY"),
+        # --- extra: everything build_user_rs_request has no kwarg for ----
+        # Constants: 100/100 in the verified sample (guidebook §4.1). The
+        # builder applies its wrapping rules to `extra` too, so plain values
+        # here stay correct even if a field is reclassified upstream.
+        extra: Dict[str, Any] = {
             "requested_media": cfg.get("requested_media", "7"),
             "allow_other_formats": False,
             "willing_to_pay": False,
-            "format": {"value": cfg.get("default_format", "DIGITAL")},
-            "citation_type": {"value": citation_type},
-            "agree_to_copyright_terms": bool(cfg.get("agree_to_copyright_terms", False)),
-            "title": title,
-            # external_id is deliberately NOT sent: the 2026-07-20 SANDBOX
-            # probe (GH #14) showed Alma discards the client's value and
-            # substitutes a broker id (972TAU…). The local id computed above
-            # exists only for logs, reports and file correlation.
         }
 
-        # --- bibliographic fields: included only when non-empty ----------
-        # isbn is not mapped: neither toolkit helper can produce it (GH #18);
-        # reinstate only after almaapitk grows ISBN extraction.
-        for key, source in (("author", "author"), ("year", "year"),
-                            ("journal_title", "journal"), ("volume", "volume"),
-                            ("issue", "issue"), ("pages", "pages"),
-                            ("start_page", "start_page"), ("end_page", "end_page"),
-                            ("issn", "issn"),
+        # Bibliographic fields: included only when non-empty ("" must be
+        # omitted, not sent blank). isbn is not mapped: neither toolkit
+        # metadata helper can produce it (GH #18); reinstate only after
+        # almaapitk grows ISBN extraction.
+        for key, source in (("volume", "volume"), ("issue", "issue"),
+                            ("pages", "pages"), ("start_page", "start_page"),
+                            ("end_page", "end_page"), ("issn", "issn"),
                             ("doi", "doi"), ("pmid", "pmid"),
                             ("publisher", "publisher")):
-            if key == "journal_title" and citation_type == "BK":
-                # A book request has no journal — for a chapter DOI Crossref's
-                # container-title is the BOOK title and must not be sent as
-                # journal_title (GH #18). Chapter-level fields (chapter_title,
-                # chapter_author) are a documented gap pending matrix T-03.
-                continue
             value = (meta.get(source) or "").strip()
             if value:
-                payload[key] = value
+                extra[key] = value
 
         note = (form_data.get("notes") or "").strip()
         if note:
-            payload["note"] = note
+            extra["note"] = note
 
         template = (cfg.get("lcc_number_template") or "").strip()
         if template:
-            payload["lcc_number"] = template.format(
+            extra["lcc_number"] = template.format(
                 hospital=hospital,
                 order_number=order_number,
                 patron_name=(form_data.get("patron_name") or "").strip(),
             ).strip()
 
         # Deliberately NOT sent — see docs/BORROWING_REQUESTS.md:
+        #   external_id   Alma discards the client value and substitutes a
+        #                 broker id (972TAU…) — GH #14, re-confirmed upstream
+        #                 2026-07-22. The local FORMS-BR-… id above exists
+        #                 only for logs, reports and file correlation.
         #   partner       assigned by the rota after creation
         #   mms_id        Alma generates a placeholder bib from this metadata
         #   oclc_number   written by the supplier, not the requester
         #   level_of_service / copyright_status  empty in 100/100
+
+        # The toolkit builder owns the wire shape: owner plain,
+        # format/citation_type/pickup_location wrapped {"value": ...},
+        # pickup_location_type plain (the §4.1 asymmetry, encoded once
+        # upstream — AlmaAPITK PR #206, live-proven 2026-07-22). The trio
+        # below was validated non-empty above, so the builder's
+        # _require_rs_text guards cannot fire here.
+        payload = build_user_rs_request(
+            owner=cfg.get("owner", "AM1"),
+            format=cfg.get("default_format", "DIGITAL"),
+            citation_type=citation_type,
+            title=title,
+            journal_title=meta.get("journal", "").strip(),
+            author=meta.get("author", "").strip(),
+            year=meta.get("year", "").strip(),
+            pickup_location=cfg.get("pickup_location", "AM1"),
+            pickup_location_type=cfg.get("pickup_location_type", "LIBRARY"),
+            agree_to_copyright_terms=bool(cfg.get("agree_to_copyright_terms", False)),
+            extra=extra,
+        )
 
         return BuiltRequest(
             kind=self.kind,
@@ -1363,7 +1417,10 @@ class BorrowingRequestBuilder(RequestBuilder):
         users = self.processor.users
         hospital = built.summary["requestor"]
         try:
-            response = users.create_user_rs_request(hospital, built.payload)
+            # validate=True (almaapitk >= 0.5.0): a wrong code-table value
+            # raises AlmaValidationError naming the field BEFORE any HTTP.
+            response = users.create_user_rs_request(
+                hospital, built.payload, validate=True)
         except AlmaAPIError as e:
             if self._is_duplicate_rejection(e):
                 # DECISION 2026-07-20 (GH #35): Alma's duplicate check IS the
@@ -1382,8 +1439,9 @@ class BorrowingRequestBuilder(RequestBuilder):
                         "external_id": built.external_id, **built.summary}
             raise
         # requests.RequestException (socket timeout, connection reset) is
-        # deliberately NOT caught: almaapitk 0.4.6 does not wrap transport
-        # errors (GH #9), and re-raising is correct here — the file stays in
+        # deliberately NOT caught: almaapitk does not wrap transport errors
+        # (GH #9; re-verified on the 2026-07-22 main), and re-raising is
+        # correct here — the file stays in
         # input, the next scheduled run re-POSTs, and if this create actually
         # saved, Alma answers 402362 and the branch above finishes the job.
         data = response.data or {}
@@ -1398,7 +1456,9 @@ class BorrowingRequestBuilder(RequestBuilder):
         already active for this patron (verified live 2026-07-20, GH #35).
 
         alma_code is the structural match; the message fallback covers error
-        bodies the toolkit could not parse into a code.
+        bodies the toolkit could not parse into a code. The substring match
+        is unaffected by the ``[almaapitk hint: ...]`` suffix that >= 0.5.0
+        appends to some unrenderable Alma 400s.
         """
         if getattr(e, "alma_code", "") == "402362":
             return True
@@ -1413,6 +1473,10 @@ removed after two live SANDBOX probes replaced assumptions with facts:
    `request_id_type="external"` lookup for our value returns
    *"No result found for given parameters"* — indistinguishable from
    never-created (GH #14; probe request `39940249320004146`, cancelled).
+   Re-confirmed independently 2026-07-22 (upstream hospital-format demo:
+   sent `"99990001"`, came back empty on GET — guidebook §9). The upstream
+   builder's docstring pitching `external_id` as an idempotency key is
+   wrong for this surface; we never pass it.
 2. **An identical re-POST while the original is active fails with alma_code
    `402362`** *"Patron has duplicate request"* (probe request
    `39940250330004146`, cancelled). This is the duplicate-safety mechanism.
@@ -1589,6 +1653,13 @@ the file is done and must leave the input folder or it retries forever):
 `duplicate` rows appear in the CSV with an empty `Request_ID` — Alma's 402362
 rejection does not say which existing request matched.
 
+`401604` ("institutional inventory has services for the requested title")
+needs **no dedicated branch**: it arrives as a generic `AlmaAPIError`, is not
+a duplicate, so it re-raises out of `submit()` into the existing generic
+handler → `status='error'` row. That is the decided policy (2026-07-22:
+never pass `override_blocks`); the file stays in `input_borrowing/` for
+manual handling, like any other errored file.
+
 Finally, give the shared client the generous timeout the matrix mandates
 (GH #19) — a borrowing create can exceed the 60s default **and still save**,
 which is exactly the scenario the 402362 recovery exists for. At the client
@@ -1750,30 +1821,36 @@ import json
 import os
 import sys
 
-from almaapitk import AlmaAPIClient, AlmaAPIError, Users
+from almaapitk import AlmaAPIClient, AlmaAPIError, Users, build_user_rs_request
 
 if os.environ.get("RUN_SB_BORROWING_TESTS") != "1":
     sys.exit("Refusing to run: set RUN_SB_BORROWING_TESTS=1 to enable SANDBOX writes.")
 
-BASE = {
-    "owner": "AM1",
-    "pickup_location": {"value": "AM1"},
-    "pickup_location_type": "LIBRARY",
+# Constants the builder has no kwarg for (guidebook §4.1); the builder wraps
+# what needs wrapping and passes these through.
+EXTRA = {
+    "requested_media": "7",
     "allow_other_formats": False,
     "willing_to_pay": False,
 }
 
 TESTS = {
-    "T-01": ("SHEB", {
-        **BASE,
-        "format": {"value": "DIGITAL"},
-        "citation_type": {"value": "CR"},
-        "title": "Interlibrary loan latency under synthetic load: a sandbox baseline",
-        "journal_title": "Journal of Resource Sharing Diagnostics",
-        "author": "Testerson, A.",
-        "year": "2024",
-        "external_id": "SBTEST-T01-20260720",
-    }),
+    # Bodies come from build_user_rs_request — the same call path production
+    # uses — so a harness pass vouches for the real payload shape.
+    # agree_to_copyright_terms=False matches the config default pending T-04.
+    "T-01": ("SHEB", build_user_rs_request(
+        owner="AM1",
+        format="DIGITAL",
+        citation_type="CR",
+        title="Interlibrary loan latency under synthetic load: a sandbox baseline",
+        journal_title="Journal of Resource Sharing Diagnostics",
+        author="Testerson, A.",
+        year="2024",
+        pickup_location="AM1",
+        pickup_location_type="LIBRARY",
+        agree_to_copyright_terms=False,
+        extra=EXTRA,
+    )),
     # Add T-02 … T-09 from the matrix as they are run.
 }
 
@@ -1802,7 +1879,7 @@ def main() -> int:
     print(f"[{args.test}] POST for user {user_id}")
     print(json.dumps(payload, indent=2, ensure_ascii=False))
     try:
-        response = users.create_user_rs_request(user_id, payload)
+        response = users.create_user_rs_request(user_id, payload, validate=True)
     except AlmaAPIError as e:
         print(f"FAILED alma_code={getattr(e, 'alma_code', '?')}: {e}")
         return 1
@@ -1876,25 +1953,32 @@ git commit -m "feat: add SANDBOX borrowing test harness and document the flow"
 
 ## Self-Review
 
-**Spec coverage.** Guidebook §4.1 constants → Task 5 Step 4 + test. §4.2
-near-constants → config defaults, Task 3 Step 5. §4.3 `CR`/`BK` and the `E_CR`
-prohibition → Task 5 tests. §4.4 bibliographic fields → Task 5 loop. §4.5
-`lcc_number` template → Tasks 3, 5, 7. §4.6 copyright → config flag, Task 5.
-§5 gotchas → Task 5 `submit` comment and Task 8 docs. §6.4 dependency floor →
-Task 0. Test matrix → Task 8 harness.
+**Spec coverage.** Guidebook §4.1 constants → Task 5 Step 4 (builder kwargs +
+`extra`) + test. §4.2 near-constants → config defaults, Task 3 Step 5. §4.3
+articles-only scope and the `E_CR`/`BK` rejection → Task 5 tests. §4.4
+bibliographic fields → Task 5 loop. §4.5 `lcc_number` template → Tasks 3, 5, 7.
+§4.6 copyright → config flag, Task 5. §5 gotchas → Task 5 `submit` comment and
+Task 8 docs. §9 upstream evidence → Global Constraints, Tasks 0 and 5. Test
+matrix → Task 8 harness.
 
 **Deliberate gaps, to be closed by evidence rather than guesswork:**
 
-1. **Field settability is unproven.** Task 5 sends `requested_media`,
+1. **Task 0 is blocked on the almaapitk 0.5.0 release** (PyPI latest is 0.4.6
+   at plan-revision time; the operator is preparing the release). Tasks 1–4
+   are executable now; Tasks 5+ wait for the floor.
+2. **Field settability is unproven.** Task 5 sends `requested_media`,
    `agree_to_copyright_terms` and possibly `lcc_number` on the strength of GET
    observations. **T-02 must run before any production use**, and its diff may
    remove fields from the payload.
-2. **`lcc_number_template` ships empty**, so the field is omitted until the
+3. **`lcc_number_template` ships empty**, so the field is omitted until the
    librarians answer. That is a knowing divergence from 98% of existing
    requests, not an oversight.
-3. **`need_patron_info`, `specific_edition`, `maximum_fee` are not sent.** They
+4. **`need_patron_info`, `specific_edition`, `maximum_fee` are not sent.** They
    vary or are suspected output-only. T-02 decides whether to add them.
-4. **Task 2 moves ~170 lines of production lending code.** The golden test plus
+5. **Book (`BK`) support is deliberately out of scope** (DECISION 2026-07-22).
+   Revisit only after AlmaAPITK #207 decomposes the PHYSICAL+BOOK 500 and a
+   book recipe is proven live in SANDBOX.
+6. **Task 2 moves ~170 lines of production lending code.** The golden test plus
    Task 1's characterization test are the only guards. If either fails after the
    move, revert rather than adjust the test.
 
