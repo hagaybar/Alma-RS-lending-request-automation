@@ -32,3 +32,12 @@ class LendingRequestError(ProcessingError):
 class FileProcessingError(ProcessingError):
     """Raised when file I/O operations fail."""
     pass
+
+
+class BorrowingValidationError(Exception):
+    """Raised before any API call when the request cannot be valid.
+
+    Lives here — not in rs_requests.borrowing — so the processor's typed
+    except clause can import it without chaining lending startup to the
+    borrowing module's almaapitk >=0.5.0-only imports.
+    """

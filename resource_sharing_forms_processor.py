@@ -63,14 +63,8 @@ from rs_requests.errors import (
     MetadataFetchError,
     LendingRequestError,
     FileProcessingError,
+    BorrowingValidationError,
 )
-
-# rs_requests.borrowing's own module-level imports (almaapitk, rs_requests.base)
-# are already a hard dependency of this module (almaapitk is imported above
-# unconditionally, for the lending path too), so importing it here at module
-# level cannot make lending's startup depend on anything lending doesn't
-# already require.
-from rs_requests.borrowing import BorrowingValidationError
 
 
 def mask_user_id(user_id: Optional[str]) -> str:

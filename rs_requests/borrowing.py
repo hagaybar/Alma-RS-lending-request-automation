@@ -17,10 +17,7 @@ from typing import Any, Dict, Optional
 from almaapitk import AlmaAPIError, build_user_rs_request
 
 from rs_requests.base import BuiltRequest, RequestBuilder
-
-
-class BorrowingValidationError(Exception):
-    """Raised before any API call when the request cannot be valid."""
+from rs_requests.errors import BorrowingValidationError
 
 
 #: DECISION 2026-07-22 — articles only. CR is the librarians' UI value and
