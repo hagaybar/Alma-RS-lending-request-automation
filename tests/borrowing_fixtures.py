@@ -12,3 +12,17 @@ CONFIG = {
                            "continue_on_metadata_failure": True,
                            "continue_on_api_error": True},
 }
+
+# --- canonical borrowing metadata (GH #12) ---------------------------------
+
+META = {
+    "title": "A distinctive article title", "author": "Testerson, A.",
+    "journal": "Journal of Diagnostics", "year": "2024", "volume": "12",
+    "issue": "3", "pages": "101-115", "start_page": "101", "end_page": "115",
+    "issn": "0000-0000", "isbn": "", "doi": "10.9999/x", "pmid": "33219451",
+    "publisher": "Sandbox Press",
+}
+
+FORM = {"requestor": "SHEB", "identifier": "33219451", "notes": "",
+        "material_type": "", "order_number": "Order_9", "filename": "r",
+        "file_token": "20072026143205"}
