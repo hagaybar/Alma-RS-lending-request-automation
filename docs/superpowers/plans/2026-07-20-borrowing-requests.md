@@ -186,7 +186,12 @@ test file in this feature imports from, so no test closes over another test
 module's globals (GH #22, GH #12):
 
 ```python
-"""Shared fixtures for the borrowing-requests feature branch (GH #22)."""
+"""Shared fixtures for the borrowing-requests feature branch (GH #22).
+
+file_processing paths here are placeholders — every consumer MUST override
+them with tmp_path-based paths before constructing a processor (tests must
+never write into the repo's live input/, processed/ or output/ folders).
+"""
 
 CONFIG = {
     "alma_settings": {"environment": "SANDBOX", "owner": "AM1", "format_type": "DIGITAL"},
@@ -204,13 +209,10 @@ Then `tests/test_lending_characterization.py`:
 ```python
 """Characterization: freeze what the lending path builds today.
 
-Runs in dry-run, so no API call is made. Asserts on the params dict handed
-to the toolkit, captured by monkeypatching the domain object.
+Runs in dry-run, so no API call is made. Asserts on the dry-run result dict
+returned by create_lending_request_from_form.
 """
-import json
 from pathlib import Path
-
-import pytest
 
 from resource_sharing_forms_processor import ResourceSharingFormsProcessor
 from tests.borrowing_fixtures import CONFIG
@@ -224,7 +226,13 @@ FORM = {
 
 
 def test_lending_params_are_unchanged(tmp_path):
-    proc = ResourceSharingFormsProcessor(CONFIG, dry_run=True)
+    cfg = dict(CONFIG)
+    cfg["file_processing"] = {
+        "input_folder": str(tmp_path / "input"),
+        "processed_folder": str(tmp_path / "processed"),
+        "output_dir": str(tmp_path / "output"),
+    }
+    proc = ResourceSharingFormsProcessor(cfg, dry_run=True)
     result = proc.create_lending_request_from_form(dict(FORM))
 
     assert result["status"] == "dry_run_success"
