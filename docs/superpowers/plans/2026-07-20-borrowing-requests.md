@@ -1744,12 +1744,21 @@ git commit -m "feat: process borrowing files end to end in dry-run"
 console output; this extends the same guarantee.
 
 **Files:**
-- Modify: `resource_sharing_forms_processor.py` (`PiiConsoleFilter`)
+- Create: `rs_requests/pii.py` (canonical home — see below)
+- Modify: `resource_sharing_forms_processor.py` (re-export next to `mask_user_id`), `rs_requests/borrowing.py` (masked debug line)
 - Test: `tests/test_pii_logging.py` (extend)
 
 **Interfaces:**
 - Consumes: existing `mask_user_id`, `PiiConsoleFilter`, `_log_pii`
 - Produces: `mask_lcc_number(value: str) -> str`
+
+> **Placement (2026-07-22, follows the `errors.py` pattern):** the function is
+> DEFINED in a new import-free `rs_requests/pii.py` and re-exported by the
+> processor (`from rs_requests.pii import mask_lcc_number`) so tests keep
+> importing it from the processor. `rs_requests/borrowing.py` imports it from
+> `rs_requests.pii` — never from the processor: a processor import from
+> inside `rs_requests` re-executes the file as a second module object under
+> production's script mode (the Task 2/Task 6 hazard).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1786,7 +1795,11 @@ Expected: FAIL — cannot import `mask_lcc_number`
 
 - [ ] **Step 3: Implement**
 
-Next to `mask_user_id`:
+In `rs_requests/pii.py` (new; module docstring: "PII masking helpers shared
+by the processor and rs_requests builders. Import-free — see
+rs_requests/errors.py for why shared code must not live in the processor."),
+with the processor re-exporting it next to `mask_user_id` via
+`from rs_requests.pii import mask_lcc_number`:
 
 ```python
 def mask_lcc_number(value: Optional[str]) -> str:
@@ -1820,7 +1833,8 @@ existing debug line to replace — GH #27):
             )
 ```
 
-importing `mask_lcc_number` from the processor module.
+importing `mask_lcc_number` from `rs_requests.pii` (NOT from the processor —
+see the Placement note above).
 
 - [ ] **Step 4: Run to verify it passes**
 
