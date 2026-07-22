@@ -797,6 +797,12 @@ change.
 
 - [ ] **Step 1: Write the failing test**
 
+> Execution note (2026-07-22): each test body must create
+> `tmp_path / "input_borrowing"` (mkdir, parents+exist_ok) BEFORE writing its
+> fixture file — the snippets below write before `_proc()` runs, and `_proc`
+> is what creates the folders, so transcribing them literally raises
+> `FileNotFoundError`. The committed tests carry the mkdir-first fix.
+
 ```python
 import pytest
 
@@ -1101,8 +1107,10 @@ def test_article_requires_journal_author_year():
 
 
 def test_omits_partner_mms_id_and_oclc_number():
+    # external_id leads the tuple: Alma discards it (GH #14) and the toolkit
+    # builder actively invites passing it — this line is the regression pin.
     p = _build().payload
-    for absent in ("partner", "mms_id", "oclc_number",
+    for absent in ("external_id", "partner", "mms_id", "oclc_number",
                    "level_of_service", "copyright_status"):
         assert absent not in p
 
