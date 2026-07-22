@@ -1312,10 +1312,12 @@ from typing import Any, Dict, Optional
 from almaapitk import AlmaAPIError, build_user_rs_request
 
 from rs_requests.base import BuiltRequest, RequestBuilder
-
-
-class BorrowingValidationError(Exception):
-    """Raised before any API call when the request cannot be valid."""
+# BorrowingValidationError is DEFINED in rs_requests/errors.py (the
+# import-light canonical exception home) and only re-imported here: the
+# processor's typed except clause needs the class WITHOUT chaining lending
+# startup to this module's almaapitk >=0.5.0-only imports (2026-07-22
+# review finding — the pull-done/install-pending deploy window on masedet).
+from rs_requests.errors import BorrowingValidationError
 
 
 #: DECISION 2026-07-22 — articles only. CR is the librarians' UI value and
@@ -1676,7 +1678,11 @@ semantics (validation problems are permanent → `skipped`; fetch problems →
 `CitationMetadataError` is already imported at the top of the processor (the
 lending path never lets it escape — it wraps it in `MetadataFetchError` — so
 this clause only ever fires for borrowing). Import `BorrowingValidationError`
-from `rs_requests.borrowing` alongside the processor's other imports.
+by adding it to the processor's existing `from rs_requests.errors import
+(...)` block — **never** import `rs_requests.borrowing` at the processor's
+module level: that would chain lending startup to the almaapitk
+`>=0.5.0`-only `build_user_rs_request` import and kill the lending path in a
+pull-done/install-pending deploy window (2026-07-22 review finding).
 
 Add a `Kind` column to the CSV report header in `generate_csv_report` and
 `_append_daily_report`, populated from `result.get('kind', 'lending')`. Both
