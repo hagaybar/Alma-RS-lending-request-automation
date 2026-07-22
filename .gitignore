@@ -74,3 +74,4 @@ tests/live_smoke_data.json
 
 # Claude Code worktrees
 .claude/worktrees/
+input_borrowing/*.tsv

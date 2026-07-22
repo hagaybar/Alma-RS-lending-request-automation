@@ -49,7 +49,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from almaapitk import AlmaAPIClient, AlmaAPIError, ResourceSharing, Users, CitationMetadataError
 
@@ -128,6 +128,9 @@ class ResourceSharingFormsProcessor:
         self.format_type = config['alma_settings'].get('format_type', 'DIGITAL')
 
         self.input_folder = Path(config['file_processing']['input_folder'])
+        self.borrowing_config = config.get('borrowing', {}) or {}
+        borrowing_folder = config['file_processing'].get('borrowing_input_folder')
+        self.borrowing_input_folder = Path(borrowing_folder) if borrowing_folder else None
         self.processed_folder = Path(config['file_processing']['processed_folder'])
         self.output_dir = Path(config['file_processing']['output_dir'])
 
@@ -469,6 +472,37 @@ class ResourceSharingFormsProcessor:
 
         return tsv_files
 
+    def find_pending_files(self) -> List[Tuple[Path, str]]:
+        """Return (path, kind) for every pending TSV across both folders.
+
+        The borrowing folder is optional: a config without it behaves exactly
+        as the lending-only processor always has.
+        """
+        pending: List[Tuple[Path, str]] = [
+            (p, 'lending') for p in self.find_pending_tsv_files()
+        ]
+        # Disabled borrowing (the shipped default) is excluded at scan time:
+        # parked files must not churn a warning + log + report row per minute
+        # (GH #29). The per-file guard in process_tsv_file remains as
+        # second-line defence for files already routed when config flips.
+        if self.borrowing_input_folder and self.borrowing_config.get('enabled', False):
+            if not self.borrowing_input_folder.exists():
+                self.logger.warning(
+                    f"Borrowing input folder does not exist: {self.borrowing_input_folder}"
+                )
+            else:
+                borrowing = sorted(self.borrowing_input_folder.glob('*.tsv'))
+                if borrowing:
+                    self.logger.debug(
+                        f"Found {len(borrowing)} TSV files in {self.borrowing_input_folder}"
+                    )
+                else:
+                    self.heartbeat_logger.debug(
+                        f"Folder check: 0 TSV files in {self.borrowing_input_folder}"
+                    )
+                pending += [(p, 'borrowing') for p in borrowing]
+        return pending
+
     def read_tsv_file(self, file_path: Path) -> Dict[str, Any]:
         """
         Read and parse TSV file.
@@ -642,12 +676,15 @@ class ResourceSharingFormsProcessor:
                     **built.summary}
         return builder.submit(built)
 
-    def process_tsv_file(self, file_path: Path) -> Dict[str, Any]:
+    def process_tsv_file(self, file_path: Path, kind: str = 'lending') -> Dict[str, Any]:
         """
         Process a single TSV file.
 
         Args:
             file_path: Path to TSV file
+            kind: Request kind ('lending' or 'borrowing'). Accepted but not
+                yet used — routing to the borrowing builder lands in a later
+                task (GH #21: keeps this task's call sites runtime-valid).
 
         Returns:
             Result dictionary with processing status
@@ -793,8 +830,8 @@ class ResourceSharingFormsProcessor:
             self.logger.info("RESOURCE SHARING FORMS PROCESSOR - SINGLE-RUN MODE")
             self.logger.info("="*80)
 
-            # Find pending files
-            pending_files = self.find_pending_tsv_files()
+            # Find pending files (lending + borrowing, tagged by kind)
+            pending_files = self.find_pending_files()
             files_found = len(pending_files)
 
             if not pending_files:
@@ -806,9 +843,9 @@ class ResourceSharingFormsProcessor:
             self.logger.info(f"Found {len(pending_files)} TSV file(s) to process")
 
             # Process each file
-            for i, file_path in enumerate(pending_files, 1):
+            for i, (file_path, kind) in enumerate(pending_files, 1):
                 self.logger.info(f"\n[File {i}/{len(pending_files)}]")
-                self.process_tsv_file(file_path)
+                self.process_tsv_file(file_path, kind)
                 files_processed += 1
 
             # Generate report: in scheduled_mode the daily report replaces
@@ -848,20 +885,27 @@ class ResourceSharingFormsProcessor:
 
         # Continuous monitoring loop
         while running:
-            pending_files = self.find_pending_tsv_files()
-            new_files = [f for f in pending_files if f.name not in self.processed_files]
+            pending_files = self.find_pending_files()
+            # Keyed on kind + name (GH #30): a lending file and a borrowing
+            # file may legitimately share a filename (both come from Power
+            # Automate).
+            new_files = [
+                (file_path, kind) for file_path, kind in pending_files
+                if f"{kind}:{file_path.name}" not in self.processed_files
+            ]
 
             if new_files:
                 self.logger.info(f"\n{'='*80}")
                 self.logger.info(f"Found {len(new_files)} new file(s)")
                 self.logger.info(f"{'='*80}")
 
-                for file_path in new_files:
+                for file_path, kind in new_files:
                     if not running:
                         break
 
-                    self.process_tsv_file(file_path)
-                    self.processed_files.add(file_path.name)
+                    token = f"{kind}:{file_path.name}"
+                    self.process_tsv_file(file_path, kind)
+                    self.processed_files.add(token)
             else:
                 # Heartbeat log: routine poll with no new files
                 self.heartbeat_logger.debug(
