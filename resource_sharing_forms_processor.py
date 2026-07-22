@@ -370,6 +370,17 @@ class ResourceSharingFormsProcessor:
     # Academic Staff user group code
     ACADEMIC_STAFF_CODE = '04'
 
+    #: Only `requestor` and `identifier` are settled with the Power Automate
+    #: side. Everything else is optional and defaults to empty.
+    #: 'patron_name' is deliberately absent (GH #17): once the librarians
+    #: answer the lcc_number question (guidebook §4.5), adding
+    #: {"patron_name": <idx>} to config['borrowing']['columns'] activates it
+    #: end-to-end — a config edit, not a code change.
+    DEFAULT_BORROWING_COLUMNS = {
+        'requestor': 0, 'identifier': 1, 'notes': 2,
+        'material_type': 3, 'order_number': 4,
+    }
+
     def _lookup_and_verify_user(self, user_id: str) -> Optional[Dict[str, Any]]:
         """
         Look up user in Alma and verify Academic Staff membership.
@@ -586,6 +597,66 @@ class ResourceSharingFormsProcessor:
 
         except Exception as e:
             raise FileProcessingError(f"Error reading TSV file {file_path.name}: {e}")
+
+    def read_borrowing_tsv_file(self, file_path: Path) -> Dict[str, Any]:
+        """Read and parse a borrowing TSV file.
+
+        Column positions come from config so that a change on the Power
+        Automate side is a config edit rather than a code change.
+        """
+        columns = {**self.DEFAULT_BORROWING_COLUMNS,
+                   **(self.borrowing_config.get('columns') or {})}
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                rows = [r for r in csv.reader(f, delimiter='\t')
+                        if r and any(c.strip() for c in r)]
+        except Exception as e:
+            raise FileProcessingError(f"Error reading TSV file {file_path.name}: {e}")
+
+        if not rows:
+            raise FileProcessingError(f"TSV file is empty: {file_path.name}")
+        row = rows[0]
+
+        def cell(name: str) -> str:
+            idx = columns.get(name)
+            if idx is None or idx >= len(row):
+                return ''
+            return row[idx].strip()
+
+        data = {
+            'filename': file_path.stem,
+            'filepath': file_path,
+            # Stable across retries (GH #13): derived from the file's mtime,
+            # not wall-clock. Error files stay in place untouched, so every
+            # retry of the same file sees the same token.
+            'file_token': datetime.fromtimestamp(
+                file_path.stat().st_mtime).strftime('%d%m%Y%H%M%S'),
+            'requestor': cell('requestor'),
+            'identifier': cell('identifier'),
+            'notes': cell('notes'),
+            'material_type': cell('material_type').upper(),
+            'order_number': cell('order_number'),
+            # Unmapped by default (no index in DEFAULT_BORROWING_COLUMNS), so
+            # this is '' until config maps it — see the columns note (GH #17).
+            'patron_name': cell('patron_name'),
+        }
+
+        allowed = self.borrowing_config.get('allowed_hospitals') or []
+        if not data['requestor']:
+            raise FileProcessingError(f"requestor is empty in {file_path.name}")
+        if allowed and data['requestor'] not in allowed:
+            raise FileProcessingError(
+                f"'{data['requestor']}' is not a configured hospital "
+                f"in {file_path.name}. Allowed: {', '.join(allowed)}"
+            )
+        if not data['identifier']:
+            raise FileProcessingError(f"identifier is empty in {file_path.name}")
+
+        self.logger.debug(f"Parsed borrowing TSV: {file_path.name}")
+        self.logger.debug(f"  Requestor: {data['requestor']}")
+        self.logger.debug(f"  Identifier: {data['identifier']}")
+        self.logger.debug(f"  Material type: {data['material_type'] or '(default)'}")
+        return data
 
     def move_to_processed(self, file_path: Path) -> None:
         """

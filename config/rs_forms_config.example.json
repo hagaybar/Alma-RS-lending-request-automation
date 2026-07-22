@@ -29,6 +29,7 @@
     "requested_media": "7",
     "agree_to_copyright_terms": false,
     "lcc_number_template": "",
+    "columns": {"requestor": 0, "identifier": 1, "notes": 2, "material_type": 3, "order_number": 4},
     "allowed_hospitals": ["ASAF", "BEIL", "IC", "LE", "ME", "SHEB", "SHH", "WOLF"]
   },
   "notes": [
