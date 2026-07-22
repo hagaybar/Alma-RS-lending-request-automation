@@ -39,7 +39,7 @@ poetry run python resource_sharing_forms_processor.py --config config/rs_forms_c
 ## Key Patterns
 
 - **Dry-run by default**: Must pass `--live` explicitly to make API calls
-- **Single file architecture**: All processor logic in one file (~1100 lines)
+- **Pipeline + builders split**: The scheduled pipeline (file I/O, dry-run/live dispatch, reporting) lives in `resource_sharing_forms_processor.py` (~1500 lines); the request build/submit step lives behind `rs_requests/` builders (`lending.py`, `borrowing.py`)
 - **Identifier auto-detection**: PMID (6-9 digits) vs DOI (starts with 10.) — ignores user-provided type
 - **Error isolation**: One file's error never stops the batch; errors logged, processing continues
 - **File-as-state**: Files in `input/` = pending, files in `processed/` = done (kept under the original input filename so downstream automation can verify processing by matching the same name)
@@ -52,7 +52,7 @@ poetry run python resource_sharing_forms_processor.py --config config/rs_forms_c
 - Python 3.12+, managed via Poetry
 - `ALMA_SB_API_KEY` — Required for SANDBOX environment
 - `ALMA_PROD_API_KEY` — Required for PRODUCTION environment
-- Depends on `almaapitk` (PyPI, pinned `>=0.4.5` — floor includes the logging credential-leak fix)
+- Depends on `almaapitk` (PyPI, pinned `>=0.5.0` — floor ships `build_user_rs_request` + the `validate=` pre-flight; the 0.4.5 logging credential-leak fix is included)
 
 ## Deployment
 

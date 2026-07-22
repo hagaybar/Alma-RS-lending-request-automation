@@ -14,8 +14,6 @@ python = "^3.12"
 # (issue #166) — safer for this *create* job — and turns request/response body
 # logging off by default (issue #142). The resource_sharing.py write path is
 # byte-identical across the bump.
-# Raise to >=0.4.7 once published: it adds a test-harness PROD-write lock
-# (runtime-neutral for this consumer; see audit §F). 0.4.7 not on PyPI yet.
 # Raised to >=0.5.0: build_user_rs_request and the validate= pre-flight on
 # Users.create_user_rs_request are absent below this (merged upstream
 # 2026-07-22, PR #206). Borrowing support cannot function on an older floor.
