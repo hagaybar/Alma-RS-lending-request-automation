@@ -657,6 +657,17 @@ class ResourceSharingFormsProcessor:
                 f"'{data['requestor']}' is not a configured hospital "
                 f"in {file_path.name}. Allowed: {', '.join(allowed)}"
             )
+        if data['material_type'] and data['material_type'] != 'CR':
+            # Rejected here — before any metadata fetch — so a parked file
+            # with the wrong material_type doesn't hit PubMed/Crossref every
+            # scheduled run forever. build()'s ALLOWED_CITATION_TYPES check
+            # stays as defence in depth (a config default could still be
+            # wrong even after this file-level check passes).
+            raise FileProcessingError(
+                f"material_type '{data['material_type']}' is out of scope "
+                f"in {file_path.name}: borrowing handles DIGITAL articles "
+                f"only (CR)"
+            )
         if not data['identifier']:
             raise FileProcessingError(f"identifier is empty in {file_path.name}")
 
@@ -731,6 +742,14 @@ class ResourceSharingFormsProcessor:
             # detected type (GH #28).
             form_data["identifier_type"] = self.detect_identifier_type(
                 form_data["identifier"])
+            if not form_data["identifier_type"]:
+                # Must fire in BOTH modes: dry-run builds against placeholder
+                # metadata regardless of the real identifier, so without this
+                # check an undetectable identifier is a dry-run false
+                # positive (dry_run_success + file moved to processed/).
+                raise IdentifierDetectionError(
+                    f"Cannot detect identifier type for: {form_data['identifier']}"
+                )
             if self.dry_run:
                 # Dry-run makes NO network calls — the project invariant the
                 # lending path already honours (GH #20). Build against
@@ -1103,6 +1122,7 @@ class ResourceSharingFormsProcessor:
         successful = sum(1 for r in self.results if r['status'] in ['success', 'dry_run_success'])
         errors = sum(1 for r in self.results if r['status'] == 'error')
         skipped = sum(1 for r in self.results if r['status'] == 'skipped')
+        duplicates = sum(1 for r in self.results if r['status'] == 'duplicate')
 
         self.logger.info("\n" + "="*80)
         self.logger.info("PROCESSING SUMMARY")
@@ -1111,6 +1131,7 @@ class ResourceSharingFormsProcessor:
         self.logger.info(f"  ✓ Successful: {successful}")
         self.logger.info(f"  ✗ Errors: {errors}")
         self.logger.info(f"  ⊗ Skipped: {skipped}")
+        self.logger.info(f"  ⟳ Duplicates: {duplicates}")
         self.logger.info("="*80)
 
     def _write_file_processing_log(self, result: Dict[str, Any]) -> None:

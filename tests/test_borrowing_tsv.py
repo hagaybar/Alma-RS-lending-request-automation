@@ -41,9 +41,12 @@ def test_parses_the_two_settled_columns(tmp_path):
 def test_parses_optional_columns_when_present(tmp_path):
     (tmp_path / "input_borrowing").mkdir(parents=True, exist_ok=True)
     f = tmp_path / "input_borrowing" / "r.tsv"
-    f.write_text("BEIL\t10.1038/x\turgent\tBK\tOrder_9\n", encoding="utf-8")
+    # material_type must be CR (or blank) — anything else is out of scope
+    # and now rejected at read time (see test_material_type_bk_is_rejected_
+    # before_any_metadata_fetch below).
+    f.write_text("BEIL\t10.1038/x\turgent\tCR\tOrder_9\n", encoding="utf-8")
     data = _proc(tmp_path).read_borrowing_tsv_file(f)
-    assert data["material_type"] == "BK"
+    assert data["material_type"] == "CR"
     assert data["order_number"] == "Order_9"
 
 
@@ -60,6 +63,17 @@ def test_rejects_missing_identifier(tmp_path):
     f = tmp_path / "input_borrowing" / "r.tsv"
     f.write_text("SHEB\t\n", encoding="utf-8")
     with pytest.raises(FileProcessingError, match="identifier is empty"):
+        _proc(tmp_path).read_borrowing_tsv_file(f)
+
+
+def test_material_type_bk_is_rejected_before_any_metadata_fetch(tmp_path):
+    """Live mode currently fetches PubMed/Crossref every minute forever for a
+    parked BK file before build() rejects it. Reject at read time instead so
+    a wrong material_type never reaches the metadata-fetch step."""
+    (tmp_path / "input_borrowing").mkdir(parents=True, exist_ok=True)
+    f = tmp_path / "input_borrowing" / "r.tsv"
+    f.write_text("SHEB\t33219451\turgent\tBK\tOrder_9\n", encoding="utf-8")
+    with pytest.raises(FileProcessingError, match="out of scope"):
         _proc(tmp_path).read_borrowing_tsv_file(f)
 
 
@@ -88,6 +102,20 @@ def test_end_to_end_dry_run_builds_a_payload(tmp_path):
     assert result["kind"] == "borrowing"
     assert result["requestor"] == "SHEB"
     assert result["detected_type"] == "pmid"     # stamped in the pipeline (GH #28)
+
+
+def test_undetectable_identifier_is_skipped_even_in_dry_run(tmp_path):
+    """Dry-run must reject an undetectable identifier too — otherwise it
+    returns a false-positive dry_run_success and moves the file (GH final
+    review)."""
+    f = tmp_path / "input_borrowing" / "r.tsv"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("SHEB\tnot-an-id\n", encoding="utf-8")
+
+    proc = _proc(tmp_path)
+    result = proc.process_tsv_file(f, kind="borrowing")
+    assert result["status"] == "skipped"
+    assert result["kind"] == "borrowing"
 
 
 def test_disabled_borrowing_skips_the_file(tmp_path):

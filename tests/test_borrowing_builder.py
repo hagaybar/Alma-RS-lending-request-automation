@@ -1,7 +1,7 @@
 import pytest
 import requests
 
-from almaapitk import AlmaAPIError
+from almaapitk import AlmaAPIError, AlmaValidationError
 
 from rs_requests.borrowing import BorrowingRequestBuilder, BorrowingValidationError
 from tests.borrowing_fixtures import FORM, META
@@ -103,6 +103,13 @@ def test_lcc_number_rendered_from_template():
     assert p["lcc_number"] == "SHEB-TAU-Order_9"
 
 
+def test_lcc_number_template_with_unknown_placeholder_is_rejected():
+    """A config typo in the template must be a permanent validation failure,
+    not a KeyError escaping to the processor's generic (retryable) handler."""
+    with pytest.raises(BorrowingValidationError, match="hopital"):
+        _build(config={"lcc_number_template": "{hopital}-x {patron_name}"})
+
+
 def test_copyright_flag_is_config_driven():
     assert _build().payload["agree_to_copyright_terms"] is False
     assert _build(config={"agree_to_copyright_terms": True}
@@ -162,6 +169,18 @@ def test_other_api_errors_reraise():
     assert users.creates == 1        # never internally retried
     # The opt-in pre-flight (almaapitk >= 0.5.0) must be on for every create.
     assert users.last_kwargs.get("validate") is True
+
+
+def test_validation_error_becomes_permanent_borrowing_validation_error():
+    """AlmaValidationError subclasses ValueError, NOT AlmaAPIError — without
+    an explicit catch it would escape to the processor's generic handler as
+    a retryable 'error', retried every minute for a permanent config typo
+    (e.g. an undocumented code-table value)."""
+    users = _FakeUsers(exc=AlmaValidationError(
+        "format=BOGUS is not a documented code-table value"))
+    with pytest.raises(BorrowingValidationError, match="not a documented"):
+        _builder_with(users).submit(_build())
+    assert users.creates == 1
 
 
 def test_transport_timeout_reraises_for_the_next_scheduled_run():

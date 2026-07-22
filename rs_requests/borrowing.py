@@ -14,7 +14,7 @@ import logging
 import re
 from typing import Any, Dict, Optional
 
-from almaapitk import AlmaAPIError, build_user_rs_request
+from almaapitk import AlmaAPIError, AlmaValidationError, build_user_rs_request
 
 from rs_requests.base import BuiltRequest, RequestBuilder
 from rs_requests.errors import BorrowingValidationError
@@ -111,11 +111,17 @@ class BorrowingRequestBuilder(RequestBuilder):
 
         template = (cfg.get("lcc_number_template") or "").strip()
         if template:
-            extra["lcc_number"] = template.format(
-                hospital=hospital,
-                order_number=order_number,
-                patron_name=(form_data.get("patron_name") or "").strip(),
-            ).strip()
+            try:
+                extra["lcc_number"] = template.format(
+                    hospital=hospital,
+                    order_number=order_number,
+                    patron_name=(form_data.get("patron_name") or "").strip(),
+                ).strip()
+            except (KeyError, IndexError) as e:
+                raise BorrowingValidationError(
+                    f"lcc_number_template {template!r} references an "
+                    f"unknown placeholder: {e}"
+                ) from e
             self.processor._log_pii(
                 logging.DEBUG,
                 f"  lcc_number: {extra['lcc_number']}",
@@ -171,6 +177,14 @@ class BorrowingRequestBuilder(RequestBuilder):
             # raises AlmaValidationError naming the field BEFORE any HTTP.
             response = users.create_user_rs_request(
                 hospital, built.payload, validate=True)
+        except AlmaValidationError as e:
+            # AlmaValidationError subclasses ValueError, NOT AlmaAPIError, so
+            # without this clause it escapes to the processor's generic
+            # handler as a retryable 'error' — retried every minute for what
+            # is actually a permanent config typo (e.g. an undocumented
+            # code-table value). Re-raise as BorrowingValidationError, which
+            # the processor's except ladder maps to a permanent 'skipped'.
+            raise BorrowingValidationError(str(e)) from e
         except AlmaAPIError as e:
             if self._is_duplicate_rejection(e):
                 # DECISION 2026-07-20 (GH #35): Alma's duplicate check IS the
