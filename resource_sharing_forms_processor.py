@@ -617,172 +617,43 @@ class ResourceSharingFormsProcessor:
             counter += 1
 
     def create_lending_request_from_form(self, form_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Process form submission into lending request.
+        """Kept as a thin shim so existing callers and tests are unaffected."""
+        return self.create_request_from_form(form_data, kind="lending")
 
-        Args:
-            form_data: Parsed form data dictionary
+    def create_request_from_form(self, form_data: Dict[str, Any],
+                                 kind: str = "lending") -> Dict[str, Any]:
+        from rs_requests import get_builder
 
-        Returns:
-            Result dictionary with status, request_id, etc.
-
-        Raises:
-            IdentifierDetectionError: If identifier type cannot be detected
-            MetadataFetchError: If metadata fetch fails
-            LendingRequestError: If request creation fails
-        """
-        # Extract fields
-        partner_code = form_data['partner_code']
-        identifier = form_data['identifier']
-
-        # Auto-detect identifier type
-        detected_type = self.detect_identifier_type(identifier)
-        if not detected_type:
-            raise IdentifierDetectionError(
-                f"Could not detect identifier type: '{identifier}'. "
-                "Expected PMID (6-9 digits) or DOI (10.xxxx/...)."
-            )
-
-        # Validate identifier format
-        if not self.validate_identifier(identifier, detected_type):
-            raise IdentifierDetectionError(
-                f"Invalid {detected_type.upper()} format: '{identifier}'"
-            )
-
-        # Generate unique external_id with partner code, timestamp, and optional order number
-        partner_code = form_data['partner_code']
-        timestamp = datetime.now().strftime('%d%m%Y%H%M%S')  # DDMMYYYYHHMMSS (no separators)
-        order_number = form_data.get('order_number', '').strip()
-
-        if order_number:
-            external_id = f"FORMS-{partner_code}-{timestamp}-{order_number}"
-        else:
-            # Fallback without order number
-            external_id = f"FORMS-{partner_code}-{timestamp}"
-            self.logger.warning(f"Order_Number missing, using partner-timestamp format: {external_id}")
-
-        self.logger.info(f"Creating lending request for {detected_type.upper()}: {identifier}")
-        self.logger.info(f"  External ID: {external_id}")
-        self.logger.info(f"  Partner: {partner_code}")
-
-        # Prepare parameters
-        params = {
-            'partner_code': partner_code,
-            'external_id': external_id,
-            'owner': self.owner,
-            'format_type': self.format_type,
-            'source_type': detected_type  # Explicit: 'pmid' or 'doi'
-        }
-
-        # Add identifier
-        if detected_type == 'pmid':
-            params['pmid'] = identifier
-        else:  # doi
-            params['doi'] = identifier
-
-        # Build structured note with Academic Staff verification
-        note_parts = []
-        user_fields = []
-
-        # Try to look up user in Alma and verify Academic Staff status
-        user_id = form_data.get('user_id', '').strip()
-        alma_user_info = self._lookup_and_verify_user(user_id) if user_id else None
-
-        if alma_user_info:
-            # User found in Alma - check Academic Staff status
-            if alma_user_info['is_academic_staff']:
-                # User IS Academic Staff - include verified info
-                user_fields.append(alma_user_info['full_name'])
-                user_fields.append('Academic staff')
-                user_fields.append(user_id)
+        builder = get_builder(kind, processor=self)
+        metadata = None
+        if builder.needs_metadata:
+            # Stamped onto form_data so summaries/reports can show the
+            # detected type (GH #28).
+            form_data["identifier_type"] = self.detect_identifier_type(
+                form_data["identifier"])
+            if self.dry_run:
+                # Dry-run makes NO network calls — the project invariant the
+                # lending path already honours (GH #20). Build against
+                # placeholder metadata; the payload structure stays
+                # inspectable for matrix T-10.
+                from rs_requests.metadata import DRY_RUN_METADATA
+                metadata = dict(DRY_RUN_METADATA)
             else:
-                # User is NOT Academic Staff - include warning with actual group
-                user_fields.append(
-                    f"User {alma_user_info['full_name']} ({user_id}) is not Academic staff "
-                    f"(actual: {alma_user_info['user_group_desc']})"
-                )
-        elif user_id and not self.dry_run:
-            # Lookup was attempted but failed (user not found or API error)
-            user_fields.append(f"User id: {user_id} not found in Alma")
-            # Include form data if available
-            if form_data.get('user_name') and form_data['user_name'].strip():
-                user_fields.append(form_data['user_name'].strip())
-            if form_data.get('is_faculty') and form_data['is_faculty'].strip():
-                user_fields.append(form_data['is_faculty'].strip())
-        else:
-            # Dry_run mode or no user_id - use form data as-is
-            if form_data.get('user_name') and form_data['user_name'].strip():
-                user_fields.append(form_data['user_name'].strip())
-            if user_id:
-                user_fields.append(user_id)
-            if form_data.get('is_faculty') and form_data['is_faculty'].strip():
-                user_fields.append(form_data['is_faculty'].strip())
-
-        # Add user fields if any present
-        if user_fields:
-            requester_info = ', '.join(user_fields)
-            note_parts.append(requester_info)
-
-        # Add comments if present
-        if form_data.get('notes') and form_data['notes'].strip():
-            note_parts.append(form_data['notes'].strip())
-
-        # Add order number if present
-        if form_data.get('order_number') and form_data['order_number'].strip():
-            note_parts.append(form_data['order_number'].strip())
-
-        # Combine with ' ; ' separator or use single part
-        if len(note_parts) > 1:
-            params['note'] = ' ; '.join(note_parts)
-        elif len(note_parts) == 1:
-            params['note'] = note_parts[0]
-        else:
-            # No note at all (valid when no user fields and no comments)
-            params['note'] = ''
-
-        if params.get('note'):
-            self._log_pii(
-                logging.INFO,
-                f"  Note: {params['note'][:100]}...",
-                "  Note: (recorded — see file log)",
-            )
-        else:
-            self.logger.info("  Note: (empty)")
-
-        # Create request (or dry-run)
-        if not self.dry_run:
-            try:
-                request = self.rs.create_lending_request_from_citation(**params)
-
-                self.logger.info(f"✓ Lending request created successfully")
-                self.logger.info(f"  Request ID: {request['request_id']}")
-                self.logger.info(f"  Title: {request.get('title', 'N/A')[:60]}")
-
-                return {
-                    'status': 'success',
-                    'request_id': request['request_id'],
-                    'external_id': external_id,
-                    'detected_type': detected_type,
-                    'title': request.get('title', '')
-                }
-            except CitationMetadataError as e:
-                raise MetadataFetchError(f"Metadata fetch failed: {e}")
-            except AlmaAPIError as e:
-                raise LendingRequestError(f"API error: {e}")
-            except Exception as e:
-                raise LendingRequestError(f"Unexpected error: {e}")
-        else:
-            self.logger.info(f"[DRY-RUN] Would create lending request")
-            self.logger.info(f"  Type: {detected_type.upper()}")
-            self.logger.info(f"  Identifier: {identifier}")
-            self.logger.info(f"  External ID: {external_id}")
-
-            return {
-                'status': 'dry_run_success',
-                'external_id': external_id,
-                'detected_type': detected_type,
-                'title': '[DRY-RUN - Not fetched]'
-            }
+                from rs_requests.metadata import fetch_citation_metadata
+                metadata = fetch_citation_metadata(
+                    form_data["identifier"], form_data["identifier_type"])
+        built = builder.build(form_data, metadata)
+        if self.dry_run:
+            self.logger.info(f"[DRY-RUN] Would create {kind} request")
+            self.logger.info(f"  External ID: {built.external_id}")
+            # Full body to the file log only: lcc_number may carry a patron
+            # name (GH #20 — this is also what matrix T-10 inspects).
+            self._log_pii(logging.DEBUG,
+                          f"  Payload: {built.payload}",
+                          "  Payload: (recorded — see file log)")
+            return {"status": "dry_run_success", "external_id": built.external_id,
+                    **built.summary}
+        return builder.submit(built)
 
     def process_tsv_file(self, file_path: Path) -> Dict[str, Any]:
         """
