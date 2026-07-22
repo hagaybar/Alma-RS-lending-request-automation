@@ -27,6 +27,8 @@ poetry run python resource_sharing_forms_processor.py --config config/rs_forms_c
 ## Architecture
 
 - `resource_sharing_forms_processor.py` — Single-file processor (main entry point)
+- `rs_requests/` — request builders: `base.py` (interface), `lending.py`, `borrowing.py`, `metadata.py`, `errors.py` (canonical exception home), `pii.py` (PII masking)
+- `input_borrowing/` — watched folder for borrowing files from Power Automate (the not-held fork)
 - `config/` — JSON config files (example checked in, prod/sandbox gitignored)
 - `batch/` — Windows batch files for launching
 - `input/` — Watched folder for incoming TSV files from Power Automate
@@ -41,6 +43,9 @@ poetry run python resource_sharing_forms_processor.py --config config/rs_forms_c
 - **Identifier auto-detection**: PMID (6-9 digits) vs DOI (starts with 10.) — ignores user-provided type
 - **Error isolation**: One file's error never stops the batch; errors logged, processing continues
 - **File-as-state**: Files in `input/` = pending, files in `processed/` = done (kept under the original input filename so downstream automation can verify processing by matching the same name)
+- **Two request kinds, one pipeline**: Power Automate forks on a holdings check — held → `input/` → lending; not held → `input_borrowing/` → borrowing. Only the terminal build/submit step differs.
+- **`SHEB` is ambiguous**: a *partner code* on the lending path, a *proxy user code* on the borrowing path. Never move one between paths.
+- **Borrowing field values are evidence-backed**: `docs/BORROWING_REQUESTS.md` derives them from 1912 real requests. Change a value there, with evidence, before changing it in code.
 
 ## Environment
 
@@ -73,3 +78,8 @@ poetry run python resource_sharing_forms_processor.py --config config/rs_forms_c
 - The `processed_files` set in watch mode is in-memory only — restarting the process re-scans, but files already moved to `processed/` won't be re-processed
 - TSV files have NO header row — 7 tab-separated columns in fixed order
 - External ID includes timestamp to seconds, so reprocessing within the same second could collide
+- Borrowing `owner` is a plain string but `pickup_location` is wrapped `{"value": ...}` — the most common cause of a borrowing `BAD_REQUEST`
+- `agree_to_copyright_terms` and `lcc_number_template` are unresolved (see the guidebook); both are config-driven so the answer needs no code change
+- A borrowing create can time out and still save — recovery is Alma's own `402362`
+  duplicate rejection on the next run's re-POST (see the Decision record in Task 5),
+  which depends on `check_patron_duplicate_borrowing_requests=true` in config

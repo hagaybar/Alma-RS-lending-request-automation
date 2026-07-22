@@ -1,0 +1,93 @@
+#!/usr/bin/env python3
+"""Run one SANDBOX test from docs/BORROWING_SB_TEST_MATRIX.md.
+
+Refuses to run without RUN_SB_BORROWING_TESTS=1. SANDBOX only. Prints a
+create/GET diff so field settability can be recorded.
+
+    RUN_SB_BORROWING_TESTS=1 poetry run python scripts/sb_borrowing_tests.py --test T-01
+    RUN_SB_BORROWING_TESTS=1 poetry run python scripts/sb_borrowing_tests.py --cancel <request_id> --user SHEB
+"""
+import argparse
+import json
+import os
+import sys
+
+from almaapitk import AlmaAPIClient, AlmaAPIError, Users, build_user_rs_request
+
+if os.environ.get("RUN_SB_BORROWING_TESTS") != "1":
+    sys.exit("Refusing to run: set RUN_SB_BORROWING_TESTS=1 to enable SANDBOX writes.")
+
+# Constants the builder has no kwarg for (guidebook §4.1); the builder wraps
+# what needs wrapping and passes these through.
+EXTRA = {
+    "requested_media": "7",
+    "allow_other_formats": False,
+    "willing_to_pay": False,
+}
+
+TESTS = {
+    # Bodies come from build_user_rs_request — the same call path production
+    # uses — so a harness pass vouches for the real payload shape.
+    # agree_to_copyright_terms=False matches the config default pending T-04.
+    "T-01": ("SHEB", build_user_rs_request(
+        owner="AM1",
+        format="DIGITAL",
+        citation_type="CR",
+        title="Interlibrary loan latency under synthetic load: a sandbox baseline",
+        journal_title="Journal of Resource Sharing Diagnostics",
+        author="Testerson, A.",
+        year="2024",
+        pickup_location="AM1",
+        pickup_location_type="LIBRARY",
+        agree_to_copyright_terms=False,
+        extra=EXTRA,
+    )),
+    # Add T-02 … T-09 from the matrix as they are run.
+}
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--test", choices=sorted(TESTS))
+    ap.add_argument("--cancel")
+    ap.add_argument("--user")
+    args = ap.parse_args()
+
+    client = AlmaAPIClient("SANDBOX", timeout=180)
+    users = Users(client)
+
+    if args.cancel:
+        if not args.user:
+            return print("--cancel requires --user") or 2
+        users.cancel_user_rs_request(args.user, args.cancel)
+        print(f"cancelled {args.cancel} for {args.user}")
+        return 0
+
+    if not args.test:
+        return print("nothing to do: pass --test or --cancel") or 2
+
+    user_id, payload = TESTS[args.test]
+    print(f"[{args.test}] POST for user {user_id}")
+    print(json.dumps(payload, indent=2, ensure_ascii=False))
+    try:
+        response = users.create_user_rs_request(user_id, payload, validate=True)
+    except AlmaAPIError as e:
+        print(f"FAILED alma_code={getattr(e, 'alma_code', '?')}: {e}")
+        return 1
+
+    created = response.data or {}
+    request_id = created.get("request_id")
+    print(f"created request_id={request_id}")
+
+    fetched = users.get_user_rs_request(user_id, request_id)
+    print("\n--- settability diff (sent -> stored) ---")
+    for key, sent in sorted(payload.items()):
+        stored = fetched.get(key, "<ABSENT>")
+        verdict = "ok" if stored == sent else "DIFFERS"
+        print(f"  {key:<28} {verdict:<8} sent={sent!r} stored={stored!r}")
+    print(f"\nRecord request_id {request_id} in the matrix cleanup log, then cancel it.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

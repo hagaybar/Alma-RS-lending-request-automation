@@ -134,6 +134,40 @@ SHEB	David, Levi	User_ID_1234	yes	33393893	שיבא - הזמנה עם פרטי �
 RELAIS				10.1038/example	Urgent request	Order_Num_24587
 ```
 
+## Borrowing Requests
+
+In addition to lending (a partner asks us to supply an item we hold), the
+processor also handles **borrowing** — we ask a partner to supply an item we
+do not hold. A Power Automate flow forks on a holdings check upstream: held
+submissions land in `input/` (lending, as above); not-held submissions land
+in a **second watched folder**, `input_borrowing/`. Both forks share the same
+file-processing, logging, and reporting machinery; only the terminal
+build/submit step differs.
+
+Borrowing is off by default. It is gated by `borrowing.enabled` in the config
+(`config/rs_forms_config.example.json`) — `false` ships out of the box, so
+existing lending-only deployments are unaffected until it is explicitly
+turned on.
+
+```json
+{
+  "file_processing": {
+    "borrowing_input_folder": "./input_borrowing"
+  },
+  "borrowing": {
+    "enabled": false
+  }
+}
+```
+
+See:
+- [docs/BORROWING_REQUESTS.md](docs/BORROWING_REQUESTS.md) — the project
+  guidebook: how borrowing differs from lending, the evidence-backed field
+  template, and open questions.
+- [docs/BORROWING_SB_TEST_MATRIX.md](docs/BORROWING_SB_TEST_MATRIX.md) — the
+  SANDBOX test matrix, runnable via `scripts/sb_borrowing_tests.py` (opt-in,
+  requires `RUN_SB_BORROWING_TESTS=1`; never runs by default).
+
 ## Identifier Detection
 
 The script automatically detects whether an identifier is a PMID or DOI based on its format:
