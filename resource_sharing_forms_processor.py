@@ -54,29 +54,16 @@ from typing import Any, Dict, List, Optional
 from almaapitk import AlmaAPIClient, AlmaAPIError, ResourceSharing, Users, CitationMetadataError
 
 
-class ProcessingError(Exception):
-    """Base exception for processing errors."""
-    pass
-
-
-class IdentifierDetectionError(ProcessingError):
-    """Raised when identifier cannot be detected or validated."""
-    pass
-
-
-class MetadataFetchError(ProcessingError):
-    """Raised when citation metadata fetch fails."""
-    pass
-
-
-class LendingRequestError(ProcessingError):
-    """Raised when lending request creation fails."""
-    pass
-
-
-class FileProcessingError(ProcessingError):
-    """Raised when file I/O operations fail."""
-    pass
+# Exception hierarchy lives in rs_requests.errors (one canonical identity —
+# see that module's docstring); re-exported here so existing importers and
+# tests are unaffected.
+from rs_requests.errors import (
+    ProcessingError,
+    IdentifierDetectionError,
+    MetadataFetchError,
+    LendingRequestError,
+    FileProcessingError,
+)
 
 
 def mask_user_id(user_id: Optional[str]) -> str:

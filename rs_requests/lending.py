@@ -8,10 +8,10 @@ from typing import Any, Dict, Optional
 from almaapitk import AlmaAPIError
 from almaapitk.utils.citation_metadata import CitationMetadataError
 
-# Cycle-safe: the processor never imports rs_requests at module level (every
-# get_builder import is deferred into a method body), so importing its
-# exception types here cannot create a circular import.
-from resource_sharing_forms_processor import (
+# From the canonical errors module — NOT from resource_sharing_forms_processor:
+# importing the processor by name from here would create a second module
+# object when production runs it as a script, splitting exception identity.
+from rs_requests.errors import (
     IdentifierDetectionError,
     LendingRequestError,
     MetadataFetchError,
