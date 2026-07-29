@@ -6,6 +6,35 @@ The Resource Sharing Forms Processor automatically detects whether an identifier
 
 **Important:** The script **IGNORES** the user-provided `identifier_type` column in the TSV file, as user input is often incorrect or unreliable. Auto-detection based on objective patterns is more accurate.
 
+## Label Normalization (runs first)
+
+The identifier column is free text, so requesters routinely type the label in
+with the value — `PMID: 15320862`, `DOI: 10.1136/bmj.abc`. Before any pattern
+matching, `normalize_identifier()` strips a recognized leading `PMID`/`DOI`
+label (issue #7).
+
+This happens **once, at the parse site** (`read_tsv_file`), so the cleaned value
+is what reaches detection, validation, *and* the downstream PubMed/Alma lookup.
+
+| Original | After Normalization | Notes |
+|----------|--------------------|-------|
+| `PMID: 15320862` | `15320862` | Label + colon + space |
+| `PMID:19583564` | `19583564` | Label + colon |
+| `pmid 19583564` | `19583564` | Label + whitespace, case-insensitive |
+| `DOI: 10.1136/bmj.abc` | `10.1136/bmj.abc` | Label + colon + space |
+| `19583564` | (unchanged) | No label present |
+| `https://doi.org/10.1136/x` | (unchanged) | URL prefixes are handled during detection, not here |
+| `doi.org/10.1136/x` | (unchanged) | No separator after the label — deliberately not stripped |
+
+The separator (a colon, whitespace, or both) is **mandatory**. A looser pattern
+would strip the `doi` out of `doi.org/10.1136/x` and leave `org/10.1136/x`,
+turning a recognizable value into nonsense.
+
+Only a recognized leading label is removed. Anything else is passed through
+untouched, so a genuinely malformed identifier still fails detection rather than
+being silently "repaired" into a wrong one — `PMID: 19583564.` normalizes to
+`19583564.` and is still rejected.
+
 ## Detection Rules
 
 ### PMID Detection
@@ -24,6 +53,7 @@ The Resource Sharing Forms Processor automatically detects whether an identifier
 | `12345678` | **PMID** ✓ | 8 digits, numeric only |
 | `123456` | **PMID** ✓ | 6 digits (min length) |
 | `123456789` | **PMID** ✓ | 9 digits (max length) |
+| `PMID: 15320862` | **PMID** ✓ | Label stripped during normalization |
 | `123` | **None** ✗ | Too short (< 6 digits) |
 | `1234567890` | **None** ✗ | Too long (> 9 digits) |
 | `abc123` | **None** ✗ | Contains letters |
@@ -65,6 +95,8 @@ Common DOI URL prefixes are **automatically stripped** before pattern matching:
 | `https://doi.org/10.1038/example` | `10.1038/example` | **DOI** ✓ | Prefix stripped, valid format |
 | `http://dx.doi.org/10.1234/abc` | `10.1234/abc` | **DOI** ✓ | Prefix stripped, valid format |
 | `doi:10.1000/test` | `10.1000/test` | **DOI** ✓ | Prefix stripped, valid format |
+| `doi: 10.1000/test` | `10.1000/test` | **DOI** ✓ | Label stripped during normalization |
+| `https://doi.org/ 10.1038/x` | `10.1038/x` | **DOI** ✓ | Prefix stripped, then re-trimmed |
 | `11.1038/example` | (unchanged) | **None** ✗ | Wrong prefix (11. not 10.) |
 | `10.abc` | (unchanged) | **None** ✗ | No slash separator |
 | `10.1234` | (unchanged) | **None** ✗ | No slash separator |
@@ -75,10 +107,11 @@ import re
 
 identifier = "https://doi.org/10.1038/example"
 
-# Strip common prefixes
+# Strip common prefixes. The re-trim matters: a prefix followed by a space
+# ("DOI: 10.x/y") otherwise leaves a leading space and stops matching ^10\.
 for prefix in ['https://doi.org/', 'http://dx.doi.org/', 'doi:']:
     if identifier.lower().startswith(prefix.lower()):
-        identifier = identifier[len(prefix):]
+        identifier = identifier[len(prefix):].strip()
         break
 
 # Check DOI pattern
@@ -121,6 +154,14 @@ If the identifier doesn't match either PMID or DOI patterns:
                  │
                  ▼
 ┌─────────────────────────────────────┐
+│ Strip label at parse time           │
+│   normalize_identifier()            │
+│   - PMID: / PMID  (any case)        │
+│   - DOI:  / DOI   (any case)        │
+└────────────────┬────────────────────┘
+                 │
+                 ▼
+┌─────────────────────────────────────┐
 │ Strip whitespace                    │
 │   identifier = identifier.strip()   │
 └────────────────┬────────────────────┘
@@ -131,6 +172,7 @@ If the identifier doesn't match either PMID or DOI patterns:
 │   - https://doi.org/                │
 │   - http://dx.doi.org/              │
 │   - doi:                            │
+│   then re-trim whitespace           │
 └────────────────┬────────────────────┘
                  │
                  ▼
@@ -373,7 +415,8 @@ grep "Detected" output/logs/processor_*.log
 |-------------------|----------------|
 | PMID Pattern | `^\d{6,9}$` (numeric, 6-9 digits) |
 | DOI Pattern | `^10\.\d+/.*` (starts with 10., has slash) |
-| Prefix Stripping | Yes (https://doi.org/, http://dx.doi.org/, doi:) |
+| Label Normalization | Yes — leading `PMID`/`DOI` label stripped at parse time |
+| Prefix Stripping | Yes (https://doi.org/, http://dx.doi.org/, doi:), then re-trimmed |
 | Whitespace Handling | Automatic strip before detection |
 | User Input | **IGNORED** (unreliable) |
 | Unknown Format | Skip file, log error, continue processing |

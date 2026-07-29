@@ -86,6 +86,33 @@ def mask_user_id(user_id: Optional[str]) -> str:
     return "*" * (len(uid) - 4) + uid[-4:]
 
 
+#: A human-typed label at the front of the free-text identifier field, e.g.
+#: "PMID: 15320862" or "DOI: 10.1136/bmj.abc" (issue #7). The separator is
+#: mandatory — a colon, whitespace, or both. Making it optional would strip the
+#: "doi" out of "doi.org/10.x/y" and leave "org/10.x/y", turning a recognizable
+#: value into nonsense.
+_IDENTIFIER_LABEL_RE = re.compile(r'^(?:pmid|doi)(?::\s*|\s+)', re.IGNORECASE)
+
+
+def normalize_identifier(raw: Optional[str]) -> str:
+    """Strip a human-typed PMID/DOI label from a free-text identifier.
+
+    The identifier column is free text, so requesters type the label in with
+    the value. Detection, validation and the downstream PubMed/Alma lookup all
+    need the bare value, so this runs once at the parse site rather than inside
+    any single consumer.
+
+    Only a recognized leading label is removed; anything else is returned
+    unchanged, so a genuinely malformed identifier still fails detection
+    instead of being silently "repaired" into a wrong one. URL-form DOIs
+    (``https://doi.org/...``) are deliberately left intact — detection already
+    handles them, and rewriting what reaches Alma is a separate decision.
+    """
+    if not raw:
+        return ''
+    return _IDENTIFIER_LABEL_RE.sub('', raw.strip(), count=1).strip()
+
+
 class PiiConsoleFilter(logging.Filter):
     """Drops log records flagged as containing PII.
 
@@ -322,11 +349,13 @@ class ResourceSharingFormsProcessor:
         # Clean identifier
         identifier = identifier.strip()
 
-        # Remove common DOI prefixes
+        # Remove common DOI prefixes. Re-trim afterwards: a prefix followed by
+        # a space ("DOI: 10.x/y") otherwise leaves a leading space and stops
+        # matching ^10\. — issue #7.
         doi_prefixes = ['https://doi.org/', 'http://dx.doi.org/', 'doi:']
         for prefix in doi_prefixes:
             if identifier.lower().startswith(prefix.lower()):
-                identifier = identifier[len(prefix):]
+                identifier = identifier[len(prefix):].strip()
                 break
 
         # PMID detection: Numeric only, 6-9 digits
@@ -363,11 +392,11 @@ class ResourceSharingFormsProcessor:
             return bool(re.match(r'^\d{6,9}$', identifier))
 
         elif id_type == 'doi':
-            # Strip DOI prefixes (same as detection)
+            # Strip DOI prefixes (same as detection, including the re-trim)
             doi_prefixes = ['https://doi.org/', 'http://dx.doi.org/', 'doi:']
             for prefix in doi_prefixes:
                 if identifier.lower().startswith(prefix.lower()):
-                    identifier = identifier[len(prefix):]
+                    identifier = identifier[len(prefix):].strip()
                     break
 
             # Must start with "10." and contain "/"
@@ -573,7 +602,9 @@ class ResourceSharingFormsProcessor:
                 'user_name': row[1].strip() if len(row) > 1 else '',
                 'user_id': row[2].strip() if len(row) > 2 else '',
                 'is_faculty': row[3].strip().lower() if len(row) > 3 else '',  # Faculty status: yes/no
-                'identifier': row[4].strip() if len(row) > 4 else '',
+                # Normalized once here, at the source: the cleaned value is what
+                # reaches detection, validation and the PubMed/Alma lookup.
+                'identifier': normalize_identifier(row[4]) if len(row) > 4 else '',
                 'notes': row[5].strip() if len(row) > 5 else '',
                 'order_number': row[6].strip() if len(row) > 6 else ''
             }
