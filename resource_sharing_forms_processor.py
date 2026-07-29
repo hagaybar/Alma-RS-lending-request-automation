@@ -671,7 +671,11 @@ class ResourceSharingFormsProcessor:
             'file_token': datetime.fromtimestamp(
                 file_path.stat().st_mtime).strftime('%d%m%Y%H%M%S'),
             'requestor': cell('requestor'),
-            'identifier': cell('identifier'),
+            # Normalized once here, at the source, exactly as the lending path
+            # does (issue #7): the borrowing folder is the same free-text
+            # column, and the cleaned value is what reaches detection and the
+            # PubMed/Crossref lookup.
+            'identifier': normalize_identifier(cell('identifier')),
             'notes': cell('notes'),
             'material_type': cell('material_type').upper(),
             'order_number': cell('order_number'),

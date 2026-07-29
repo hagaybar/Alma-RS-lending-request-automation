@@ -13,7 +13,8 @@ with the value — `PMID: 15320862`, `DOI: 10.1136/bmj.abc`. Before any pattern
 matching, `normalize_identifier()` strips a recognized leading `PMID`/`DOI`
 label (issue #7).
 
-This happens **once, at the parse site** (`read_tsv_file`), so the cleaned value
+This happens **once, at each parse site** (`read_tsv_file` for lending,
+`read_borrowing_tsv_file` for borrowing), so the cleaned value
 is what reaches detection, validation, *and* the downstream PubMed/Alma lookup.
 
 | Original | After Normalization | Notes |

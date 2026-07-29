@@ -214,6 +214,7 @@ There are **two**, and they are unrelated:
 | The `402362` duplicate check is **config-dependent**: customer parameter `check_patron_duplicate_borrowing_requests`, **false by default**, enabled at TAU. Active requests only; compares user + citation fields (Title, ISBN, Volume…) | `VERIFIED` live + Ex Libris FAQ, 2026-07-20 (§8) |
 | `override_blocks=true` pushed a create past a 60s timeout; without it the same body returned in ~3s | `VERIFIED` 2026-07-19. Treat override as a workaround, not the recipe |
 | `401604` "institutional inventory has services for the requested title" blocks a create with HTTP 400 despite the "Warning" wording | `VERIFIED` 2026-07-19. Should be rare here — Power Automate has already established we do *not* hold the item |
+| The identifier column is **free text** — requesters type the label in with the value (`PMID: 15320862`). Stripped at the borrowing parse site by `normalize_identifier()`; see [IDENTIFIER_DETECTION.md](IDENTIFIER_DETECTION.md) | `VERIFIED` in production on the lending path, issue #7 |
 
 ### Error codes
 

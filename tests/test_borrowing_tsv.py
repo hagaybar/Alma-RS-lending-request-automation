@@ -50,6 +50,32 @@ def test_parses_optional_columns_when_present(tmp_path):
     assert data["order_number"] == "Order_9"
 
 
+@pytest.mark.parametrize("raw, expected", [
+    ("PMID: 15320862", "15320862"),
+    ("pmid 33219451", "33219451"),
+    ("DOI: 10.1038/x", "10.1038/x"),
+])
+def test_strips_human_typed_label_from_identifier(tmp_path, raw, expected):
+    """Issue #7 applies to the borrowing folder too — same free-text column.
+
+    Borrowing has its own parse site, so the lending fix does not cover it.
+    """
+    (tmp_path / "input_borrowing").mkdir(parents=True, exist_ok=True)
+    f = tmp_path / "input_borrowing" / "r.tsv"
+    f.write_text(f"SHEB\t{raw}\n", encoding="utf-8")
+    data = _proc(tmp_path).read_borrowing_tsv_file(f)
+    assert data["identifier"] == expected
+
+
+def test_leaves_url_doi_identifier_unchanged(tmp_path):
+    """URL-form DOIs are out of scope for cleaning — they must survive intact."""
+    (tmp_path / "input_borrowing").mkdir(parents=True, exist_ok=True)
+    f = tmp_path / "input_borrowing" / "r.tsv"
+    f.write_text("SHEB\thttps://doi.org/10.1038/x\n", encoding="utf-8")
+    data = _proc(tmp_path).read_borrowing_tsv_file(f)
+    assert data["identifier"] == "https://doi.org/10.1038/x"
+
+
 def test_rejects_unknown_hospital(tmp_path):
     (tmp_path / "input_borrowing").mkdir(parents=True, exist_ok=True)
     f = tmp_path / "input_borrowing" / "r.tsv"
