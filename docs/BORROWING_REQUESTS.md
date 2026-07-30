@@ -191,14 +191,16 @@ and CSV reports for file correlation — Alma never sees or stores it.
 There are **two**, and they are unrelated:
 
 - **`agree_to_copyright_terms`** — the librarian's signature on the UI
-  copyright statement. `VERIFIED`: **98 × `false`, 2 × `true`** in the deep
-  sample. `OPEN`: yesterday's SANDBOX recipe sent `true`, and the skill file
-  records it as "mandatory TRUE for borrowing". Real data contradicts that.
-  Whether Alma *requires* `true` at create but does not persist it is exactly
-  what test `T-04` in the test matrix settles. (2026-07-22: the upstream
-  `build_user_rs_request` defaults it to `True` — a third voice in the
-  contradiction, GH #31. Our code passes the config value explicitly, so
-  that default never applies.)
+  copyright statement. **`SETTLED` 2026-07-30 (SB, T-04 via T-01, GH #31):
+  Alma rejects `false` at create** (`401897 Invalid field value`), and `true`
+  succeeds **and stores as `true`** on immediate GET. So the API contract is:
+  send `true`, always. The **98 × `false`, 2 × `true`** in the deep sample of
+  manual requests is how the *UI* populates the field, not Alma rewriting an
+  API-sent `true` — API-created requests will simply differ from the manual
+  population here, which is acceptable. Config ships
+  `borrowing.agree_to_copyright_terms: true`; the code fallback for a missing
+  key is also `true` (a payload with `false` is known to fail). The skill
+  file's "mandatory TRUE for borrowing" turned out to be correct.
 - **`copyright_status`** — an internal Alma copyright mechanism that **is not
   used here** (`VERIFIED` by the operator; empty in 100/100). **Omit.**
 
@@ -236,11 +238,18 @@ Nothing below can be resolved by reading. Each needs a SANDBOX create; see
 `docs/BORROWING_SB_TEST_MATRIX.md` (and §9 for what the 2026-07-22 upstream
 session already settled).
 
-1. **Which fields are settable at create.** Every field in §4 is confirmed on
-   GET only. `requested_media`, `specific_edition`, `lcc_number`, `maximum_fee`
-   and `need_patron_info` are the ones most likely to be silently dropped.
-2. **`agree_to_copyright_terms`** — required `true`, or should we send `false`
-   to match the manual population?
+1. ~~**Which fields are settable at create.**~~ **`SETTLED` 2026-07-30 (T-02 +
+   T-02b, matrix):** *every* template field is settable — including all five
+   suspects (`requested_media`, `specific_edition`, `lcc_number`,
+   `maximum_fee`, `need_patron_info`); the only dropped field is
+   `external_id` (§4.5, already known). With a **real** identifier, Alma's
+   augmentation synchronously overwrites the bib core (`title`, `author`,
+   `year`, `volume`, `issue`, `start_page`, `end_page`, `issn`) from the
+   resolved record; `journal_title`, `pages`, `publisher`,
+   `place_of_publication`, `note`, `bib_note` and all operational fields stay
+   as sent.
+2. ~~**`agree_to_copyright_terms`**~~ **`SETTLED` 2026-07-30:** required
+   `true` at create — `false` is rejected with `401897` (§4.6).
 3. **Whether omitting `partner` and `mms_id`** produces a request that looks
    like the manual ones once the rota has run.
 4. ~~**Whether the almaapitk floor pinned in `pyproject.toml` exposes
@@ -257,8 +266,12 @@ session already settled).
   **Done upstream 2026-07-22** — the skill file now records "use `CR`, not
   `E_CR`" with the A/B persistence evidence (§9), in section "Borrowing
   create — observed behavior (SB 2026-07-22)".
-- Correct "`agree_to_copyright_terms` … mandatory TRUE for borrowing" in the
-  same file to reflect the 98/100 `false` observation, pending `T-04`.
+- ~~Correct "`agree_to_copyright_terms` … mandatory TRUE for borrowing" in the
+  same file to reflect the 98/100 `false` observation, pending `T-04`.~~
+  **Resolved 2026-07-30 — no correction needed:** T-04 confirmed the skill
+  file was right (`false` is rejected at create, `401897`). The skill file
+  instead gained the dated evidence note plus the T-02/T-02b settability and
+  augmentation verdicts.
 
 ## 8. Probe log — 2026-07-20 (all `VERIFIED` live in SANDBOX)
 

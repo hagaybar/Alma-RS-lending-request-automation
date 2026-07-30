@@ -14,7 +14,7 @@ class FakeProcessor:
         "owner": "AM1", "pickup_location": "AM1",
         "pickup_location_type": "LIBRARY", "default_format": "DIGITAL",
         "default_citation_type": "CR", "requested_media": "7",
-        "agree_to_copyright_terms": False, "lcc_number_template": "",
+        "agree_to_copyright_terms": True, "lcc_number_template": "",
     }
     class logger:
         @staticmethod
@@ -111,9 +111,9 @@ def test_lcc_number_template_with_unknown_placeholder_is_rejected():
 
 
 def test_copyright_flag_is_config_driven():
-    assert _build().payload["agree_to_copyright_terms"] is False
-    assert _build(config={"agree_to_copyright_terms": True}
-                  ).payload["agree_to_copyright_terms"] is True
+    assert _build().payload["agree_to_copyright_terms"] is True
+    assert _build(config={"agree_to_copyright_terms": False}
+                  ).payload["agree_to_copyright_terms"] is False
 
 
 def test_empty_metadata_fields_are_omitted_not_sent_blank():

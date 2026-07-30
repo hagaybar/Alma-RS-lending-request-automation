@@ -154,7 +154,10 @@ class BorrowingRequestBuilder(RequestBuilder):
             year=meta.get("year", "").strip(),
             pickup_location=cfg.get("pickup_location", "AM1"),
             pickup_location_type=cfg.get("pickup_location_type", "LIBRARY"),
-            agree_to_copyright_terms=bool(cfg.get("agree_to_copyright_terms", False)),
+            # Fallback True: Alma rejects false at create (401897, SB T-04
+            # 2026-07-30), so a missing config key must not build a payload
+            # that is known to fail.
+            agree_to_copyright_terms=bool(cfg.get("agree_to_copyright_terms", True)),
             extra=extra,
         )
 

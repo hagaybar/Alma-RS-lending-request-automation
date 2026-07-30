@@ -28,7 +28,7 @@
     "default_format": "DIGITAL",
     "default_citation_type": "CR",
     "requested_media": "7",
-    "agree_to_copyright_terms": false,
+    "agree_to_copyright_terms": true,
     "lcc_number_template": "",
     "columns": {"requestor": 0, "identifier": 1, "notes": 2, "material_type": 3, "order_number": 4},
     "allowed_hospitals": ["ASAF", "BEIL", "IC", "LE", "ME", "SHEB", "SHH", "WOLF"]
@@ -44,7 +44,7 @@
     "api_timeout_seconds: Alma API client HTTP timeout in seconds (default: 180) — shared by lending and borrowing creates; a borrowing create can exceed the previous 60s default and still save",
     "borrowing.enabled: master switch; false means borrowing files are ignored entirely",
     "borrowing scope (DECISION 2026-07-22): articles only — CR + DIGITAL. A material_type other than CR is rejected before any API call",
-    "borrowing.agree_to_copyright_terms: OPEN — 98/100 real requests store false; confirm with SB test T-04 before changing",
+    "borrowing.agree_to_copyright_terms: RESOLVED 2026-07-30 (SB test T-04) — must be true; Alma rejects false at create (401897). The 98/100 false seen on manual requests is a UI-population artifact",
     "borrowing.lcc_number_template: OPEN — pending the librarians. Placeholders: {hospital} {order_number} {patron_name}. Empty means omit the field",
     "borrowing.allowed_hospitals: proxy user codes; a file naming any other requestor is rejected before any API call"
   ]
