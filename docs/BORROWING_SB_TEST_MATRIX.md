@@ -58,6 +58,15 @@ Everything else is measured as a delta from this.
 
 **User:** `SHEB` · **Expect:** HTTP 200 + `request_id`, in ~3s.
 
+> ✅ **PASSED 2026-07-30** — `request_id 39940482970004146`, `REQUEST_CREATED_BOR`,
+> ~11s, via the harness (builder-produced body). Two deviations from the spec
+> below: (1) the first attempt sent `agree_to_copyright_terms: false` and was
+> **rejected at create** (`401897 Invalid field value`) — see T-04; the pass
+> used `true`, which also **stored** as `true`. (2) the builder body sends no
+> `external_id`; Alma stored it *empty* (unlike the GH #35 probe, which got an
+> auto-generated one). Settability diff was clean — all sent fields stored
+> verbatim (wrapped fields gain only a `desc` label).
+
 ```python
 {
     **BASE,
@@ -155,6 +164,18 @@ Run three creates, identical but for this one field:
 | T-04a | *omitted entirely* | `SBTEST-T04A-20260720` |
 | T-04b | `False` | `SBTEST-T04B-20260720` |
 | T-04c | `True` | `SBTEST-T04C-20260720` |
+
+> **2026-07-30 — b and c verdicts landed early, via T-01** (user `SHEB`, T-01
+> body, not the `IC` variants above): `false` is **rejected at create**
+> (`401897 Invalid field value. Field: agree_to_copyright_terms, Value:
+> false.`) and `true` succeeds **and stores as `true`** on immediate GET.
+> Per the decision rule this is the "b fails and c succeeds" branch → the
+> field is mandatory at create; **send `true`** (`borrowing.
+> agree_to_copyright_terms: true` in config) and note in the guidebook §4.6
+> that API-created requests will differ from the 98/100-`false` manual
+> population. Still open if wanted: T-04a (field omitted), and whether the
+> stored `true` survives the rota/UI lifecycle (the manual `false`s may be
+> a UI-population artifact rather than a persistence rewrite).
 
 **User:** `IC` · Body is T-01's, with the title
 `"Copyright agreement flag behaviour on the borrowing create endpoint"`.
@@ -316,6 +337,8 @@ Fill in as tests are run. **A request created and not cancelled is a defect.**
 |---|---|---|---|---|---|
 | GH #14 probe (pre-matrix) | sent `SBTEST-EXT14-20260720`, stored `972TAU0068653` | `39940249320004146` | SHEB | ✅ yes | 2026-07-20 |
 | GH #35 probe (pre-matrix) | none sent, stored `972TAU0068654` | `39940250330004146` | SHEB | ✅ yes | 2026-07-20 |
+| T-01 attempt 1 (`agree_to_copyright_terms: false`) | — | — (create rejected, 401897; nothing to clean) | SHEB | n/a | 2026-07-30 |
+| T-01 (passed, flag `true`) | none sent, stored *empty* | `39940482970004146` | SHEB | ❌ kept for UI inspection (user request) | 2026-07-30 |
 
 Outstanding from 2026-07-19 (created before this matrix existed, still not
 cleaned up): `39940155760004146`, `39940156450004146`, `39940157570004146`.

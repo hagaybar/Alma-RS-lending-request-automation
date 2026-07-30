@@ -28,7 +28,9 @@ EXTRA = {
 TESTS = {
     # Bodies come from build_user_rs_request — the same call path production
     # uses — so a harness pass vouches for the real payload shape.
-    # agree_to_copyright_terms=False matches the config default pending T-04.
+    # agree_to_copyright_terms must be True at create: SANDBOX rejects False
+    # outright (401897 "Invalid field value", 2026-07-30) — the T-04b verdict.
+    # Stored state may still differ from sent; T-04's GET step records that.
     "T-01": ("SHEB", build_user_rs_request(
         owner="AM1",
         format="DIGITAL",
@@ -39,7 +41,7 @@ TESTS = {
         year="2024",
         pickup_location="AM1",
         pickup_location_type="LIBRARY",
-        agree_to_copyright_terms=False,
+        agree_to_copyright_terms=True,
         extra=EXTRA,
     )),
     # Add T-02 … T-09 from the matrix as they are run.
