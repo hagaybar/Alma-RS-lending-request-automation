@@ -5,8 +5,10 @@
     "owner": "AM1",
     "format_type": "DIGITAL"
   },
+  "api_timeout_seconds": 180,
   "file_processing": {
     "input_folder": "./input",
+    "borrowing_input_folder": "./input_borrowing",
     "processed_folder": "./processed",
     "output_dir": "./output"
   },
@@ -18,6 +20,19 @@
     "continue_on_metadata_failure": true,
     "continue_on_api_error": true
   },
+  "borrowing": {
+    "enabled": true,
+    "owner": "AM1",
+    "pickup_location": "AM1",
+    "pickup_location_type": "LIBRARY",
+    "default_format": "DIGITAL",
+    "default_citation_type": "CR",
+    "requested_media": "7",
+    "agree_to_copyright_terms": true,
+    "lcc_number_template": "",
+    "columns": {"requestor": 0, "identifier": 1, "notes": 2, "order_number": 3},
+    "allowed_hospitals": ["ASAF", "BEIL", "IC", "LE", "ME", "SHEB", "SHH", "WOLF"]
+  },
   "notes": [
     "environment: SANDBOX or PRODUCTION",
     "owner: Resource sharing library code (must be valid in Alma)",
@@ -25,6 +40,12 @@
     "input_folder: Path to SharePoint sync folder with form submissions",
     "processed_folder: Where completed files are moved",
     "output_dir: Where logs and reports are saved",
-    "poll_interval: Seconds between checks in watch mode (default: 60)"
+    "poll_interval: Seconds between checks in watch mode (default: 60)",
+    "api_timeout_seconds: Alma API client HTTP timeout in seconds (default: 180) — shared by lending and borrowing creates; a borrowing create can exceed the previous 60s default and still save",
+    "borrowing.enabled: explicit kill switch, default true (DECISION 2026-07-30) — configuring borrowing_input_folder is the activation decision; set false to pause borrowing without touching the folder or the PA flow",
+    "borrowing scope (DECISION 2026-07-22): articles only — CR + DIGITAL. material_type is NOT in the default column mapping (PA sends 4 columns); the builder uses default_citation_type. If PA adds the column, map it in borrowing.columns — any value other than CR is then rejected before any API call",
+    "borrowing.agree_to_copyright_terms: RESOLVED 2026-07-30 (SB test T-04) — must be true; Alma rejects false at create (401897). The 98/100 false seen on manual requests is a UI-population artifact",
+    "borrowing.lcc_number_template: OPEN — pending the librarians. Placeholders: {hospital} {order_number} {patron_name}. Empty means omit the field",
+    "borrowing.allowed_hospitals: proxy user codes; a file naming any other requestor is rejected before any API call"
   ]
 }

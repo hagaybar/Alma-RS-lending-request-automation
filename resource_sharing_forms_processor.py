@@ -49,34 +49,26 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from almaapitk import AlmaAPIClient, AlmaAPIError, ResourceSharing, Users, CitationMetadataError
 
 
-class ProcessingError(Exception):
-    """Base exception for processing errors."""
-    pass
+# Exception hierarchy lives in rs_requests.errors (one canonical identity —
+# see that module's docstring); re-exported here so existing importers and
+# tests are unaffected.
+from rs_requests.errors import (
+    ProcessingError,
+    IdentifierDetectionError,
+    MetadataFetchError,
+    LendingRequestError,
+    FileProcessingError,
+    BorrowingValidationError,
+)
 
-
-class IdentifierDetectionError(ProcessingError):
-    """Raised when identifier cannot be detected or validated."""
-    pass
-
-
-class MetadataFetchError(ProcessingError):
-    """Raised when citation metadata fetch fails."""
-    pass
-
-
-class LendingRequestError(ProcessingError):
-    """Raised when lending request creation fails."""
-    pass
-
-
-class FileProcessingError(ProcessingError):
-    """Raised when file I/O operations fail."""
-    pass
+# PII masking for lcc_number lives in rs_requests.pii; re-exported here so
+# tests can import from the processor (just like mask_user_id).
+from rs_requests.pii import mask_lcc_number
 
 
 def mask_user_id(user_id: Optional[str]) -> str:
@@ -168,6 +160,9 @@ class ResourceSharingFormsProcessor:
         self.format_type = config['alma_settings'].get('format_type', 'DIGITAL')
 
         self.input_folder = Path(config['file_processing']['input_folder'])
+        self.borrowing_config = config.get('borrowing', {}) or {}
+        borrowing_folder = config['file_processing'].get('borrowing_input_folder')
+        self.borrowing_input_folder = Path(borrowing_folder) if borrowing_folder else None
         self.processed_folder = Path(config['file_processing']['processed_folder'])
         self.output_dir = Path(config['file_processing']['output_dir'])
 
@@ -187,7 +182,10 @@ class ResourceSharingFormsProcessor:
         # Initialize Alma clients (unless dry-run)
         if not dry_run:
             self.logger.info(f"Initializing Alma API client for {self.environment}")
-            self.client = AlmaAPIClient(self.environment)
+            self.client = AlmaAPIClient(
+                self.environment,
+                timeout=int(config.get('api_timeout_seconds', 180)),
+            )
             self.rs = ResourceSharing(self.client)
             self.users = Users(self.client)
 
@@ -409,6 +407,20 @@ class ResourceSharingFormsProcessor:
     # Academic Staff user group code
     ACADEMIC_STAFF_CODE = '04'
 
+    #: Only `requestor` and `identifier` are settled with the Power Automate
+    #: side. Everything else is optional and defaults to empty.
+    #: 'patron_name' is deliberately absent (GH #17): once the librarians
+    #: answer the lcc_number question (guidebook §4.5), adding
+    #: {"patron_name": <idx>} to config['borrowing']['columns'] activates it
+    #: end-to-end — a config edit, not a code change.
+    # The 4-column layout Power Automate actually sends. material_type is
+    # unmapped by default (like patron_name): the builder falls back to
+    # borrowing.default_citation_type (CR). If PA ever adds the column,
+    # mapping it in config re-enables per-file values — no code change.
+    DEFAULT_BORROWING_COLUMNS = {
+        'requestor': 0, 'identifier': 1, 'notes': 2, 'order_number': 3,
+    }
+
     def _lookup_and_verify_user(self, user_id: str) -> Optional[Dict[str, Any]]:
         """
         Look up user in Alma and verify Academic Staff membership.
@@ -511,6 +523,37 @@ class ResourceSharingFormsProcessor:
 
         return tsv_files
 
+    def find_pending_files(self) -> List[Tuple[Path, str]]:
+        """Return (path, kind) for every pending TSV across both folders.
+
+        The borrowing folder is optional: a config without it behaves exactly
+        as the lending-only processor always has.
+        """
+        pending: List[Tuple[Path, str]] = [
+            (p, 'lending') for p in self.find_pending_tsv_files()
+        ]
+        # Disabled borrowing (the shipped default) is excluded at scan time:
+        # parked files must not churn a warning + log + report row per minute
+        # (GH #29). The per-file guard in process_tsv_file remains as
+        # second-line defence for files already routed when config flips.
+        if self.borrowing_input_folder and self.borrowing_config.get('enabled', True):
+            if not self.borrowing_input_folder.exists():
+                self.logger.warning(
+                    f"Borrowing input folder does not exist: {self.borrowing_input_folder}"
+                )
+            else:
+                borrowing = sorted(self.borrowing_input_folder.glob('*.tsv'))
+                if borrowing:
+                    self.logger.debug(
+                        f"Found {len(borrowing)} TSV files in {self.borrowing_input_folder}"
+                    )
+                else:
+                    self.heartbeat_logger.debug(
+                        f"Folder check: 0 TSV files in {self.borrowing_input_folder}"
+                    )
+                pending += [(p, 'borrowing') for p in borrowing]
+        return pending
+
     def read_tsv_file(self, file_path: Path) -> Dict[str, Any]:
         """
         Read and parse TSV file.
@@ -597,6 +640,81 @@ class ResourceSharingFormsProcessor:
         except Exception as e:
             raise FileProcessingError(f"Error reading TSV file {file_path.name}: {e}")
 
+    def read_borrowing_tsv_file(self, file_path: Path) -> Dict[str, Any]:
+        """Read and parse a borrowing TSV file.
+
+        Column positions come from config so that a change on the Power
+        Automate side is a config edit rather than a code change.
+        """
+        columns = {**self.DEFAULT_BORROWING_COLUMNS,
+                   **(self.borrowing_config.get('columns') or {})}
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                rows = [r for r in csv.reader(f, delimiter='\t')
+                        if r and any(c.strip() for c in r)]
+        except Exception as e:
+            raise FileProcessingError(f"Error reading TSV file {file_path.name}: {e}")
+
+        if not rows:
+            raise FileProcessingError(f"TSV file is empty: {file_path.name}")
+        row = rows[0]
+
+        def cell(name: str) -> str:
+            idx = columns.get(name)
+            if idx is None or idx >= len(row):
+                return ''
+            return row[idx].strip()
+
+        data = {
+            'filename': file_path.stem,
+            'filepath': file_path,
+            # Stable across retries (GH #13): derived from the file's mtime,
+            # not wall-clock. Error files stay in place untouched, so every
+            # retry of the same file sees the same token.
+            'file_token': datetime.fromtimestamp(
+                file_path.stat().st_mtime).strftime('%d%m%Y%H%M%S'),
+            'requestor': cell('requestor'),
+            # Normalized once here, at the source, exactly as the lending path
+            # does (issue #7): the borrowing folder is the same free-text
+            # column, and the cleaned value is what reaches detection and the
+            # PubMed/Crossref lookup.
+            'identifier': normalize_identifier(cell('identifier')),
+            'notes': cell('notes'),
+            'material_type': cell('material_type').upper(),
+            'order_number': cell('order_number'),
+            # Unmapped by default (no index in DEFAULT_BORROWING_COLUMNS), so
+            # this is '' until config maps it — see the columns note (GH #17).
+            'patron_name': cell('patron_name'),
+        }
+
+        allowed = self.borrowing_config.get('allowed_hospitals') or []
+        if not data['requestor']:
+            raise FileProcessingError(f"requestor is empty in {file_path.name}")
+        if allowed and data['requestor'] not in allowed:
+            raise FileProcessingError(
+                f"'{data['requestor']}' is not a configured hospital "
+                f"in {file_path.name}. Allowed: {', '.join(allowed)}"
+            )
+        if data['material_type'] and data['material_type'] != 'CR':
+            # Rejected here — before any metadata fetch — so a parked file
+            # with the wrong material_type doesn't hit PubMed/Crossref every
+            # scheduled run forever. build()'s ALLOWED_CITATION_TYPES check
+            # stays as defence in depth (a config default could still be
+            # wrong even after this file-level check passes).
+            raise FileProcessingError(
+                f"material_type '{data['material_type']}' is out of scope "
+                f"in {file_path.name}: borrowing handles DIGITAL articles "
+                f"only (CR)"
+            )
+        if not data['identifier']:
+            raise FileProcessingError(f"identifier is empty in {file_path.name}")
+
+        self.logger.debug(f"Parsed borrowing TSV: {file_path.name}")
+        self.logger.debug(f"  Requestor: {data['requestor']}")
+        self.logger.debug(f"  Identifier: {data['identifier']}")
+        self.logger.debug(f"  Material type: {data['material_type'] or '(default)'}")
+        return data
+
     def move_to_processed(self, file_path: Path) -> None:
         """
         Move a completed file to the processed folder under its original name.
@@ -648,179 +766,61 @@ class ResourceSharingFormsProcessor:
             counter += 1
 
     def create_lending_request_from_form(self, form_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Process form submission into lending request.
+        """Kept as a thin shim so existing callers and tests are unaffected."""
+        return self.create_request_from_form(form_data, kind="lending")
 
-        Args:
-            form_data: Parsed form data dictionary
+    def create_request_from_form(self, form_data: Dict[str, Any],
+                                 kind: str = "lending") -> Dict[str, Any]:
+        from rs_requests import get_builder
 
-        Returns:
-            Result dictionary with status, request_id, etc.
-
-        Raises:
-            IdentifierDetectionError: If identifier type cannot be detected
-            MetadataFetchError: If metadata fetch fails
-            LendingRequestError: If request creation fails
-        """
-        # Extract fields
-        partner_code = form_data['partner_code']
-        identifier = form_data['identifier']
-
-        # Auto-detect identifier type
-        detected_type = self.detect_identifier_type(identifier)
-        if not detected_type:
-            raise IdentifierDetectionError(
-                f"Could not detect identifier type: '{identifier}'. "
-                "Expected PMID (6-9 digits) or DOI (10.xxxx/...)."
-            )
-
-        # Validate identifier format
-        if not self.validate_identifier(identifier, detected_type):
-            raise IdentifierDetectionError(
-                f"Invalid {detected_type.upper()} format: '{identifier}'"
-            )
-
-        # Generate unique external_id with partner code, timestamp, and optional order number
-        partner_code = form_data['partner_code']
-        timestamp = datetime.now().strftime('%d%m%Y%H%M%S')  # DDMMYYYYHHMMSS (no separators)
-        order_number = form_data.get('order_number', '').strip()
-
-        if order_number:
-            external_id = f"FORMS-{partner_code}-{timestamp}-{order_number}"
-        else:
-            # Fallback without order number
-            external_id = f"FORMS-{partner_code}-{timestamp}"
-            self.logger.warning(f"Order_Number missing, using partner-timestamp format: {external_id}")
-
-        self.logger.info(f"Creating lending request for {detected_type.upper()}: {identifier}")
-        self.logger.info(f"  External ID: {external_id}")
-        self.logger.info(f"  Partner: {partner_code}")
-
-        # Prepare parameters
-        params = {
-            'partner_code': partner_code,
-            'external_id': external_id,
-            'owner': self.owner,
-            'format_type': self.format_type,
-            'source_type': detected_type  # Explicit: 'pmid' or 'doi'
-        }
-
-        # Add identifier
-        if detected_type == 'pmid':
-            params['pmid'] = identifier
-        else:  # doi
-            params['doi'] = identifier
-
-        # Build structured note with Academic Staff verification
-        note_parts = []
-        user_fields = []
-
-        # Try to look up user in Alma and verify Academic Staff status
-        user_id = form_data.get('user_id', '').strip()
-        alma_user_info = self._lookup_and_verify_user(user_id) if user_id else None
-
-        if alma_user_info:
-            # User found in Alma - check Academic Staff status
-            if alma_user_info['is_academic_staff']:
-                # User IS Academic Staff - include verified info
-                user_fields.append(alma_user_info['full_name'])
-                user_fields.append('Academic staff')
-                user_fields.append(user_id)
-            else:
-                # User is NOT Academic Staff - include warning with actual group
-                user_fields.append(
-                    f"User {alma_user_info['full_name']} ({user_id}) is not Academic staff "
-                    f"(actual: {alma_user_info['user_group_desc']})"
+        builder = get_builder(kind, processor=self)
+        metadata = None
+        if builder.needs_metadata:
+            # Stamped onto form_data so summaries/reports can show the
+            # detected type (GH #28).
+            form_data["identifier_type"] = self.detect_identifier_type(
+                form_data["identifier"])
+            if not form_data["identifier_type"]:
+                # Must fire in BOTH modes: dry-run builds against placeholder
+                # metadata regardless of the real identifier, so without this
+                # check an undetectable identifier is a dry-run false
+                # positive (dry_run_success + file moved to processed/).
+                raise IdentifierDetectionError(
+                    f"Cannot detect identifier type for: {form_data['identifier']}"
                 )
-        elif user_id and not self.dry_run:
-            # Lookup was attempted but failed (user not found or API error)
-            user_fields.append(f"User id: {user_id} not found in Alma")
-            # Include form data if available
-            if form_data.get('user_name') and form_data['user_name'].strip():
-                user_fields.append(form_data['user_name'].strip())
-            if form_data.get('is_faculty') and form_data['is_faculty'].strip():
-                user_fields.append(form_data['is_faculty'].strip())
-        else:
-            # Dry_run mode or no user_id - use form data as-is
-            if form_data.get('user_name') and form_data['user_name'].strip():
-                user_fields.append(form_data['user_name'].strip())
-            if user_id:
-                user_fields.append(user_id)
-            if form_data.get('is_faculty') and form_data['is_faculty'].strip():
-                user_fields.append(form_data['is_faculty'].strip())
+            if self.dry_run:
+                # Dry-run makes NO network calls — the project invariant the
+                # lending path already honours (GH #20). Build against
+                # placeholder metadata; the payload structure stays
+                # inspectable for matrix T-10.
+                from rs_requests.metadata import DRY_RUN_METADATA
+                metadata = dict(DRY_RUN_METADATA)
+            else:
+                from rs_requests.metadata import fetch_citation_metadata
+                metadata = fetch_citation_metadata(
+                    form_data["identifier"], form_data["identifier_type"])
+        built = builder.build(form_data, metadata)
+        if self.dry_run:
+            self.logger.info(f"[DRY-RUN] Would create {kind} request")
+            self.logger.info(f"  External ID: {built.external_id}")
+            # Full body to the file log only: lcc_number may carry a patron
+            # name (GH #20 — this is also what matrix T-10 inspects).
+            self._log_pii(logging.DEBUG,
+                          f"  Payload: {built.payload}",
+                          "  Payload: (recorded — see file log)")
+            return {"status": "dry_run_success", "external_id": built.external_id,
+                    **built.summary}
+        return builder.submit(built)
 
-        # Add user fields if any present
-        if user_fields:
-            requester_info = ', '.join(user_fields)
-            note_parts.append(requester_info)
-
-        # Add comments if present
-        if form_data.get('notes') and form_data['notes'].strip():
-            note_parts.append(form_data['notes'].strip())
-
-        # Add order number if present
-        if form_data.get('order_number') and form_data['order_number'].strip():
-            note_parts.append(form_data['order_number'].strip())
-
-        # Combine with ' ; ' separator or use single part
-        if len(note_parts) > 1:
-            params['note'] = ' ; '.join(note_parts)
-        elif len(note_parts) == 1:
-            params['note'] = note_parts[0]
-        else:
-            # No note at all (valid when no user fields and no comments)
-            params['note'] = ''
-
-        if params.get('note'):
-            self._log_pii(
-                logging.INFO,
-                f"  Note: {params['note'][:100]}...",
-                "  Note: (recorded — see file log)",
-            )
-        else:
-            self.logger.info("  Note: (empty)")
-
-        # Create request (or dry-run)
-        if not self.dry_run:
-            try:
-                request = self.rs.create_lending_request_from_citation(**params)
-
-                self.logger.info(f"✓ Lending request created successfully")
-                self.logger.info(f"  Request ID: {request['request_id']}")
-                self.logger.info(f"  Title: {request.get('title', 'N/A')[:60]}")
-
-                return {
-                    'status': 'success',
-                    'request_id': request['request_id'],
-                    'external_id': external_id,
-                    'detected_type': detected_type,
-                    'title': request.get('title', '')
-                }
-            except CitationMetadataError as e:
-                raise MetadataFetchError(f"Metadata fetch failed: {e}")
-            except AlmaAPIError as e:
-                raise LendingRequestError(f"API error: {e}")
-            except Exception as e:
-                raise LendingRequestError(f"Unexpected error: {e}")
-        else:
-            self.logger.info(f"[DRY-RUN] Would create lending request")
-            self.logger.info(f"  Type: {detected_type.upper()}")
-            self.logger.info(f"  Identifier: {identifier}")
-            self.logger.info(f"  External ID: {external_id}")
-
-            return {
-                'status': 'dry_run_success',
-                'external_id': external_id,
-                'detected_type': detected_type,
-                'title': '[DRY-RUN - Not fetched]'
-            }
-
-    def process_tsv_file(self, file_path: Path) -> Dict[str, Any]:
+    def process_tsv_file(self, file_path: Path, kind: str = 'lending') -> Dict[str, Any]:
         """
         Process a single TSV file.
 
         Args:
             file_path: Path to TSV file
+            kind: Request kind ('lending' or 'borrowing'). Routes the file
+                read (read_tsv_file vs read_borrowing_tsv_file) and the
+                request build (create_request_from_form(..., kind=kind)).
 
         Returns:
             Result dictionary with processing status
@@ -833,27 +833,53 @@ class ResourceSharingFormsProcessor:
             'timestamp': datetime.now().isoformat(),
             'filename': file_path.name,
             'status': 'unknown',
+            'kind': kind,
             'error_message': ''
         }
 
-        try:
-            # Read TSV file
-            form_data = self.read_tsv_file(file_path)
-            result.update({
-                'partner_code': form_data['partner_code'],
-                'user_name': form_data['user_name'],
-                'user_id': form_data['user_id'],
-                'is_faculty': form_data['is_faculty'],
-                'identifier': form_data['identifier'],
-                'order_number': form_data['order_number']
-            })
+        # Default ON (2026-07-30): configuring borrowing_input_folder IS the
+        # activation decision; 'enabled' remains as an explicit kill switch.
+        if kind == 'borrowing' and not self.borrowing_config.get('enabled', True):
+            self.logger.warning(
+                f"Borrowing is disabled in config; skipping {file_path.name}"
+            )
+            return {'status': 'skipped', 'kind': kind,
+                    'filename': file_path.name,
+                    'error_message': 'borrowing disabled in config'}
 
-            # Create lending request
-            request_result = self.create_lending_request_from_form(form_data)
+        try:
+            if kind == 'borrowing':
+                form_data = self.read_borrowing_tsv_file(file_path)
+                result.update({
+                    # No partner at create time — the rota assigns one later.
+                    'partner_code': '',
+                    'user_name': '',
+                    # The hospital proxy code IS the requesting user of a
+                    # borrowing request; surfacing it as user_id lands it in
+                    # the reports' existing Requestor_ID column.
+                    'user_id': form_data['requestor'],
+                    'is_faculty': '',
+                    'requestor': form_data['requestor'],
+                    'identifier': form_data['identifier'],
+                    'order_number': form_data['order_number']
+                })
+            else:
+                form_data = self.read_tsv_file(file_path)
+                result.update({
+                    'partner_code': form_data['partner_code'],
+                    'user_name': form_data['user_name'],
+                    'user_id': form_data['user_id'],
+                    'is_faculty': form_data['is_faculty'],
+                    'identifier': form_data['identifier'],
+                    'order_number': form_data['order_number']
+                })
+
+            # Create request (lending or borrowing, per kind)
+            request_result = self.create_request_from_form(form_data, kind=kind)
             result.update(request_result)
 
             # Move to processed folder
-            if result['status'] in ['success', 'dry_run_success']:
+            if result['status'] in ['success', 'dry_run_success', 'duplicate']:
                 self.move_to_processed(file_path)
 
         except IdentifierDetectionError as e:
@@ -873,6 +899,16 @@ class ResourceSharingFormsProcessor:
 
         except FileProcessingError as e:
             self.logger.error(f"✗ File processing error: {e}")
+            result['status'] = 'error'
+            result['error_message'] = str(e)
+
+        except BorrowingValidationError as e:
+            self.logger.error(f"✗ Borrowing validation error: {e}")
+            result['status'] = 'skipped'
+            result['error_message'] = str(e)
+
+        except CitationMetadataError as e:
+            self.logger.error(f"✗ Metadata fetch error: {e}")
             result['status'] = 'error'
             result['error_message'] = str(e)
 
@@ -966,8 +1002,8 @@ class ResourceSharingFormsProcessor:
             self.logger.info("RESOURCE SHARING FORMS PROCESSOR - SINGLE-RUN MODE")
             self.logger.info("="*80)
 
-            # Find pending files
-            pending_files = self.find_pending_tsv_files()
+            # Find pending files (lending + borrowing, tagged by kind)
+            pending_files = self.find_pending_files()
             files_found = len(pending_files)
 
             if not pending_files:
@@ -979,9 +1015,9 @@ class ResourceSharingFormsProcessor:
             self.logger.info(f"Found {len(pending_files)} TSV file(s) to process")
 
             # Process each file
-            for i, file_path in enumerate(pending_files, 1):
+            for i, (file_path, kind) in enumerate(pending_files, 1):
                 self.logger.info(f"\n[File {i}/{len(pending_files)}]")
-                self.process_tsv_file(file_path)
+                self.process_tsv_file(file_path, kind)
                 files_processed += 1
 
             # Generate report: in scheduled_mode the daily report replaces
@@ -1021,20 +1057,27 @@ class ResourceSharingFormsProcessor:
 
         # Continuous monitoring loop
         while running:
-            pending_files = self.find_pending_tsv_files()
-            new_files = [f for f in pending_files if f.name not in self.processed_files]
+            pending_files = self.find_pending_files()
+            # Keyed on kind + name (GH #30): a lending file and a borrowing
+            # file may legitimately share a filename (both come from Power
+            # Automate).
+            new_files = [
+                (file_path, kind) for file_path, kind in pending_files
+                if f"{kind}:{file_path.name}" not in self.processed_files
+            ]
 
             if new_files:
                 self.logger.info(f"\n{'='*80}")
                 self.logger.info(f"Found {len(new_files)} new file(s)")
                 self.logger.info(f"{'='*80}")
 
-                for file_path in new_files:
+                for file_path, kind in new_files:
                     if not running:
                         break
 
-                    self.process_tsv_file(file_path)
-                    self.processed_files.add(file_path.name)
+                    token = f"{kind}:{file_path.name}"
+                    self.process_tsv_file(file_path, kind)
+                    self.processed_files.add(token)
             else:
                 # Heartbeat log: routine poll with no new files
                 self.heartbeat_logger.debug(
@@ -1075,7 +1118,7 @@ class ResourceSharingFormsProcessor:
 
         # CSV columns
         fieldnames = [
-            'Timestamp', 'Filename', 'Partner_Code', 'Full_Name', 'Requestor_ID',
+            'Timestamp', 'Filename', 'Kind', 'Partner_Code', 'Full_Name', 'Requestor_ID',
             'IsFaculty', 'Order_Number', 'Identifier_Type', 'Identifier', 'Status',
             'Request_ID', 'External_ID', 'Title', 'Error_Message'
         ]
@@ -1089,6 +1132,7 @@ class ResourceSharingFormsProcessor:
                 writer.writerow({
                     'Timestamp': result.get('timestamp', ''),
                     'Filename': result.get('filename', ''),
+                    'Kind': result.get('kind', 'lending'),
                     'Partner_Code': result.get('partner_code', ''),
                     'Full_Name': result.get('user_name', ''),
                     'Requestor_ID': result.get('user_id', ''),
@@ -1118,6 +1162,7 @@ class ResourceSharingFormsProcessor:
         successful = sum(1 for r in self.results if r['status'] in ['success', 'dry_run_success'])
         errors = sum(1 for r in self.results if r['status'] == 'error')
         skipped = sum(1 for r in self.results if r['status'] == 'skipped')
+        duplicates = sum(1 for r in self.results if r['status'] == 'duplicate')
 
         self.logger.info("\n" + "="*80)
         self.logger.info("PROCESSING SUMMARY")
@@ -1126,6 +1171,7 @@ class ResourceSharingFormsProcessor:
         self.logger.info(f"  ✓ Successful: {successful}")
         self.logger.info(f"  ✗ Errors: {errors}")
         self.logger.info(f"  ⊗ Skipped: {skipped}")
+        self.logger.info(f"  ⟳ Duplicates: {duplicates}")
         self.logger.info("="*80)
 
     def _write_file_processing_log(self, result: Dict[str, Any]) -> None:
@@ -1154,6 +1200,7 @@ class ResourceSharingFormsProcessor:
         lines = []
         lines.append(f"Processing Log for: {result.get('filename', 'unknown')}")
         lines.append(f"Timestamp: {result.get('timestamp', datetime.now().isoformat())}")
+        lines.append(f"Kind: {result.get('kind', 'lending')}")
         lines.append(f"{'=' * 60}")
         lines.append("")
 
@@ -1217,7 +1264,7 @@ class ResourceSharingFormsProcessor:
         report_file = reports_dir / f'processed_{today}.csv'
 
         fieldnames = [
-            'Timestamp', 'Filename', 'Partner_Code', 'Identifier_Type',
+            'Timestamp', 'Filename', 'Kind', 'Partner_Code', 'Identifier_Type',
             'Identifier', 'Title', 'Status', 'Request_ID', 'External_ID',
             'Error_Message'
         ]
@@ -1233,6 +1280,7 @@ class ResourceSharingFormsProcessor:
             writer.writerow({
                 'Timestamp': result.get('timestamp', ''),
                 'Filename': result.get('filename', ''),
+                'Kind': result.get('kind', 'lending'),
                 'Partner_Code': result.get('partner_code', ''),
                 'Identifier_Type': result.get('detected_type', ''),
                 'Identifier': result.get('identifier', ''),
