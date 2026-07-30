@@ -368,6 +368,7 @@ Fill in as tests are run. **A request created and not cancelled is a defect.**
 | T-01 attempt 1 (`agree_to_copyright_terms: false`) | — | — (create rejected, 401897; nothing to clean) | SHEB | n/a | 2026-07-30 |
 | T-01 (passed, flag `true`) | none sent, stored *empty* | `39940482970004146` | SHEB | ❌ kept for UI inspection (user request) | 2026-07-30 |
 | T-02 (passed) | sent `SBTEST-T02-20260720`, stored *empty* | `39940483500004146` | SHEB | ❌ kept for UI inspection (user request) | 2026-07-30 |
+| T-02b (passed) | sent `SBTEST-T02B-20260730`, stored *empty* | `39940484010004146` | SHEB | ❌ kept for UI inspection (user request) | 2026-07-30 |
 
 Outstanding from 2026-07-19 (created before this matrix existed, still not
 cleaned up): `39940155760004146`, `39940156450004146`, `39940157570004146`.
@@ -397,3 +398,30 @@ metadata deliberately perturbed (e.g. wrong `year`, truncated `title`), then
   are the full sent→stored contract for production.
 
 **Cleanup:** cancel, record in §4.
+
+> ✅ **PASSED 2026-07-30** — `request_id 39940484010004146`, ~4s, user `SHEB`,
+> real `pmid: 33219451` + every metadata string deliberately wrong, no `doi`.
+> **Augmentation ran synchronously** (overwrites already present on the
+> immediate GET) and no `401604` fired despite the real identifier.
+>
+> **Augmentation-owned (overwritten with the PubMed record):**
+> `title`, `author`, `year`, `volume`, `issue`, `start_page`, `end_page`,
+> `issn`.
+>
+> **Sender-owned (our wrong values survived untouched):** `journal_title` (!),
+> `pages` (the combined string — stored `"1-2"` next to augmented
+> `start_page: 998` / `end_page: 1010`, so the two can disagree),
+> `publisher`, `place_of_publication`, `note`, `bib_note`, plus every
+> operational field (`lcc_number`, `requested_media`, `specific_edition`,
+> `need_patron_info`, `maximum_fee`, booleans).
+>
+> Production contract (with T-02): when a real identifier is present, the
+> bibliographic core belongs to augmentation and whatever we send there is
+> advisory; `journal_title`/`pages` and the operational fields are ours and
+> must be right at send time. Prefer `start_page`/`end_page` over `pages`
+> to avoid the stored disagreement.
+>
+> *(Aside: `tests/test_citation_metadata.py` mislabels 33219451 as the
+> Remdesivir article; PubMed resolves it to "Immobilization of Laccase on
+> Magnetic Nanoparticles…", Yin Liang, 2021 — which is what Alma stored,
+> proving the overwrite source. GH #33 settled.)*

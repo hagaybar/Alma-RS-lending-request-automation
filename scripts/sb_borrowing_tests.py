@@ -81,6 +81,43 @@ TESTS = {
             "lcc_number": "SHEBA-TAU-9001 Test Patron",
         },
     )),
+    # T-02b: T-02 shape but a REAL pmid (33219451, the repo's canonical test
+    # article — Remdesivir/Covid-19, 2020) with every metadata string
+    # deliberately wrong, so anything augmentation overwrites is unmissable
+    # in the diff. No doi — production sends one identifier. The title is
+    # wrong-but-distinctive rather than truncated to keep the title-based
+    # 401604 holdings check out of the way (matrix rule 4).
+    "T-02b": ("SHEB", build_user_rs_request(
+        owner="AM1",
+        format="DIGITAL",
+        citation_type="CR",
+        title="Remdesivir probe with deliberately perturbed metadata (T-02b)",
+        journal_title="Journal of Resource Sharing Diagnostics",
+        author="Testerson, A.",
+        year="2015",
+        pickup_location="AM1",
+        pickup_location_type="LIBRARY",
+        agree_to_copyright_terms=True,
+        external_id="SBTEST-T02B-20260730",
+        extra={
+            **EXTRA,
+            "volume": "1",
+            "issue": "1",
+            "pages": "1-2",
+            "start_page": "1",
+            "end_page": "2",
+            "issn": "0000-0000",
+            "pmid": "33219451",
+            "publisher": "Sandbox Press",
+            "place_of_publication": "Tel Aviv",
+            "note": "T-02b augmentation probe",
+            "bib_note": "T-02b bib note probe",
+            "specific_edition": True,
+            "need_patron_info": False,
+            "maximum_fee": 0.0,
+            "lcc_number": "SHEBA-TAU-9001 Test Patron",
+        },
+    )),
     # Add T-04a/T-07/T-09 from the matrix as they are run.
 }
 
