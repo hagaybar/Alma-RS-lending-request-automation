@@ -144,10 +144,11 @@ in a **second watched folder**, `input_borrowing/`. Both forks share the same
 file-processing, logging, and reporting machinery; only the terminal
 build/submit step differs.
 
-Borrowing is off by default. It is gated by `borrowing.enabled` in the config
-(`config/rs_forms_config.example.json`) — `false` ships out of the box, so
-existing lending-only deployments are unaffected until it is explicitly
-turned on.
+The activation decision is configuring `borrowing_input_folder`: deployments
+whose config has no borrowing folder (all existing lending-only configs) are
+unaffected, and adding the folder turns borrowing on. `borrowing.enabled`
+remains as an explicit kill switch (default `true`) — set it to `false` to
+pause borrowing without touching the folder or the Power Automate flow.
 
 ```json
 {
@@ -155,10 +156,16 @@ turned on.
     "borrowing_input_folder": "./input_borrowing"
   },
   "borrowing": {
-    "enabled": false
+    "enabled": true
   }
 }
 ```
+
+Borrowing TSVs carry **4 tab-separated columns, no header**: `requestor`
+(hospital/proxy code), `identifier` (PMID or DOI, free text), `notes`,
+`order_number`. Column positions — and optional extra columns such as
+`material_type` or `patron_name` — are config-driven via `borrowing.columns`,
+so a Power Automate format change is a config edit, not a code change.
 
 See:
 - [docs/BORROWING_REQUESTS.md](docs/BORROWING_REQUESTS.md) — the project

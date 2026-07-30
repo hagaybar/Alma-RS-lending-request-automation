@@ -413,9 +413,12 @@ class ResourceSharingFormsProcessor:
     #: answer the lcc_number question (guidebook §4.5), adding
     #: {"patron_name": <idx>} to config['borrowing']['columns'] activates it
     #: end-to-end — a config edit, not a code change.
+    # The 4-column layout Power Automate actually sends. material_type is
+    # unmapped by default (like patron_name): the builder falls back to
+    # borrowing.default_citation_type (CR). If PA ever adds the column,
+    # mapping it in config re-enables per-file values — no code change.
     DEFAULT_BORROWING_COLUMNS = {
-        'requestor': 0, 'identifier': 1, 'notes': 2,
-        'material_type': 3, 'order_number': 4,
+        'requestor': 0, 'identifier': 1, 'notes': 2, 'order_number': 3,
     }
 
     def _lookup_and_verify_user(self, user_id: str) -> Optional[Dict[str, Any]]:
@@ -533,7 +536,7 @@ class ResourceSharingFormsProcessor:
         # parked files must not churn a warning + log + report row per minute
         # (GH #29). The per-file guard in process_tsv_file remains as
         # second-line defence for files already routed when config flips.
-        if self.borrowing_input_folder and self.borrowing_config.get('enabled', False):
+        if self.borrowing_input_folder and self.borrowing_config.get('enabled', True):
             if not self.borrowing_input_folder.exists():
                 self.logger.warning(
                     f"Borrowing input folder does not exist: {self.borrowing_input_folder}"
@@ -834,7 +837,9 @@ class ResourceSharingFormsProcessor:
             'error_message': ''
         }
 
-        if kind == 'borrowing' and not self.borrowing_config.get('enabled', False):
+        # Default ON (2026-07-30): configuring borrowing_input_folder IS the
+        # activation decision; 'enabled' remains as an explicit kill switch.
+        if kind == 'borrowing' and not self.borrowing_config.get('enabled', True):
             self.logger.warning(
                 f"Borrowing is disabled in config; skipping {file_path.name}"
             )

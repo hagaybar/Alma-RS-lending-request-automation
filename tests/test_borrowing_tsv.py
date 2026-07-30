@@ -19,9 +19,9 @@ def _proc(tmp_path, columns=None):
     cfg["borrowing"] = {
         "enabled": True,
         "allowed_hospitals": ["SHEB", "BEIL"],
-        "columns": columns or {"requestor": 0, "identifier": 1,
-                               "notes": 2, "material_type": 3, "order_number": 4},
     }
+    if columns is not None:
+        cfg["borrowing"]["columns"] = columns
     (tmp_path / "input").mkdir(exist_ok=True)
     (tmp_path / "input_borrowing").mkdir(exist_ok=True)
     return ResourceSharingFormsProcessor(cfg, dry_run=True)
@@ -38,14 +38,34 @@ def test_parses_the_two_settled_columns(tmp_path):
     assert data["material_type"] == ""
 
 
-def test_parses_optional_columns_when_present(tmp_path):
+def test_default_mapping_is_the_four_column_pa_layout(tmp_path):
+    """Power Automate sends requestor/identifier/notes/order_number only —
+    material_type is unmapped by default (like patron_name) and the builder
+    falls back to default_citation_type. A 4-column file must not leak the
+    order number into material_type."""
+    (tmp_path / "input_borrowing").mkdir(parents=True, exist_ok=True)
+    f = tmp_path / "input_borrowing" / "r.tsv"
+    f.write_text("BEIL\t10.1038/x\turgent\tOrder_9\n", encoding="utf-8")
+    data = _proc(tmp_path).read_borrowing_tsv_file(f)
+    assert data["material_type"] == ""
+    assert data["order_number"] == "Order_9"
+    assert data["notes"] == "urgent"
+
+
+# The legacy 5-column layout with material_type at index 3 — now opt-in via
+# config, kept tested so re-adding the column later is a config edit only.
+LEGACY_5COL = {"requestor": 0, "identifier": 1, "notes": 2,
+               "material_type": 3, "order_number": 4}
+
+
+def test_parses_material_type_when_config_maps_it(tmp_path):
     (tmp_path / "input_borrowing").mkdir(parents=True, exist_ok=True)
     f = tmp_path / "input_borrowing" / "r.tsv"
     # material_type must be CR (or blank) — anything else is out of scope
     # and now rejected at read time (see test_material_type_bk_is_rejected_
     # before_any_metadata_fetch below).
     f.write_text("BEIL\t10.1038/x\turgent\tCR\tOrder_9\n", encoding="utf-8")
-    data = _proc(tmp_path).read_borrowing_tsv_file(f)
+    data = _proc(tmp_path, columns=LEGACY_5COL).read_borrowing_tsv_file(f)
     assert data["material_type"] == "CR"
     assert data["order_number"] == "Order_9"
 
@@ -100,7 +120,7 @@ def test_material_type_bk_is_rejected_before_any_metadata_fetch(tmp_path):
     f = tmp_path / "input_borrowing" / "r.tsv"
     f.write_text("SHEB\t33219451\turgent\tBK\tOrder_9\n", encoding="utf-8")
     with pytest.raises(FileProcessingError, match="out of scope"):
-        _proc(tmp_path).read_borrowing_tsv_file(f)
+        _proc(tmp_path, columns=LEGACY_5COL).read_borrowing_tsv_file(f)
 
 
 def test_column_positions_are_config_driven(tmp_path):
@@ -142,6 +162,20 @@ def test_undetectable_identifier_is_skipped_even_in_dry_run(tmp_path):
     result = proc.process_tsv_file(f, kind="borrowing")
     assert result["status"] == "skipped"
     assert result["kind"] == "borrowing"
+
+
+def test_borrowing_enabled_defaults_to_true(tmp_path):
+    """Deployment decision 2026-07-30: presence of borrowing_input_folder in
+    config is the activation gate; 'enabled' is an explicit-off switch only,
+    so a config block without the key means ON."""
+    f = tmp_path / "input_borrowing" / "r.tsv"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("SHEB\t33219451\n", encoding="utf-8")
+    proc = _proc(tmp_path)
+    proc.borrowing_config = {k: v for k, v in proc.borrowing_config.items()
+                             if k != "enabled"}
+    result = proc.process_tsv_file(f, kind="borrowing")
+    assert result["status"] == "dry_run_success"
 
 
 def test_disabled_borrowing_skips_the_file(tmp_path):
