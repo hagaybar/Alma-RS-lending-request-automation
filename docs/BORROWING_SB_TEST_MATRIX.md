@@ -1,6 +1,7 @@
 # Borrowing Requests — SANDBOX Test Matrix
 
-> **Nothing in this file has been executed.** These are proposed requests.
+> Originally all-proposed; **execution began 2026-07-30** — tests carry dated
+> ✅/❌ verdict notes inline as they run (see also §4 cleanup log).
 > Every payload targets the Alma **SANDBOX** only.
 >
 > **Updated 2026-07-22:** T-03 dropped (articles-only scope), T-05
@@ -121,6 +122,33 @@ against what was sent. **Anything that vanishes is output-only.**
 
 **Record for each field:** sent → returned → verdict (`settable` /
 `dropped` / `transformed`). This table becomes the authority for the builder.
+
+> ✅ **PASSED 2026-07-30** — `request_id 39940483500004146`, ~3s, via the
+> harness (builder body + `extra`; `agree_to_copyright_terms: true` added per
+> the T-01/T-04 verdict). **The authority table** (immediate GET after create;
+> fake pmid/doi kept augmentation silent by design — real-id behaviour is
+> T-02b's):
+>
+> | Field | Sent | Stored | Verdict |
+> |---|---|---|---|
+> | `title`, `journal_title`, `author`, `year` | as spec | = sent | settable |
+> | `volume`, `issue`, `pages`, `start_page`, `end_page` | as spec | = sent | settable |
+> | `issn`, `pmid`, `doi` | fake values | = sent | settable |
+> | `publisher`, `place_of_publication` | as spec | = sent | settable |
+> | `note`, `bib_note` | as spec | = sent | settable |
+> | `requested_media` | `"7"` | = sent | **settable** (was suspect) |
+> | `specific_edition` | `True` | = sent | **settable** (was suspect) |
+> | `need_patron_info` | `False` | = sent | **settable** (was suspect) |
+> | `maximum_fee` | `0.0` | = sent | **settable** (was suspect) |
+> | `lcc_number` | `"SHEBA-TAU-9001 Test Patron"` | = sent | **settable** (was suspect) |
+> | `owner`, `pickup_location_type` | plain strings | = sent | settable |
+> | `allow_other_formats`, `willing_to_pay`, `agree_to_copyright_terms` | booleans | = sent | settable |
+> | `format`, `citation_type`, `pickup_location` | wrapped `{value}` | value = sent, gains `desc` | transformed (cosmetic) |
+> | `external_id` | `"SBTEST-T02-20260720"` | `""` | **dropped** (re-confirms §8.1) |
+>
+> **Bottom line for the builder: every field in the production template is
+> settable; nothing is silently dropped except `external_id`, which stays a
+> local log-correlation marker only.** §7.1 open question 1 is settled.
 
 ### T-03 — Book chapter (`BK` + `DIGITAL`) — ❌ **DROPPED 2026-07-22 (out of scope)**
 
@@ -339,6 +367,7 @@ Fill in as tests are run. **A request created and not cancelled is a defect.**
 | GH #35 probe (pre-matrix) | none sent, stored `972TAU0068654` | `39940250330004146` | SHEB | ✅ yes | 2026-07-20 |
 | T-01 attempt 1 (`agree_to_copyright_terms: false`) | — | — (create rejected, 401897; nothing to clean) | SHEB | n/a | 2026-07-30 |
 | T-01 (passed, flag `true`) | none sent, stored *empty* | `39940482970004146` | SHEB | ❌ kept for UI inspection (user request) | 2026-07-30 |
+| T-02 (passed) | sent `SBTEST-T02-20260720`, stored *empty* | `39940483500004146` | SHEB | ❌ kept for UI inspection (user request) | 2026-07-30 |
 
 Outstanding from 2026-07-19 (created before this matrix existed, still not
 cleaned up): `39940155760004146`, `39940156450004146`, `39940157570004146`.

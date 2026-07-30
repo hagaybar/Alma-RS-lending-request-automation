@@ -44,7 +44,44 @@ TESTS = {
         agree_to_copyright_terms=True,
         extra=EXTRA,
     )),
-    # Add T-02 … T-09 from the matrix as they are run.
+    # T-02 sends every field from the 100-record sample (matrix §1) so the
+    # GET diff can classify each as settable/dropped/transformed. Fields the
+    # builder has no kwarg for ride in extra. agree_to_copyright_terms=True
+    # per the T-01/T-04 verdict; the fake pmid/doi keep augmentation silent
+    # (real-identifier behaviour is T-02b's job).
+    "T-02": ("SHEB", build_user_rs_request(
+        owner="AM1",
+        format="DIGITAL",
+        citation_type="CR",
+        title="Field settability of the Alma user resource-sharing create endpoint",
+        journal_title="Journal of Resource Sharing Diagnostics",
+        author="Testerson, A.; Probe, B.",
+        year="2024",
+        pickup_location="AM1",
+        pickup_location_type="LIBRARY",
+        agree_to_copyright_terms=True,
+        external_id="SBTEST-T02-20260720",
+        extra={
+            **EXTRA,
+            "volume": "12",
+            "issue": "3",
+            "pages": "101-115",
+            "start_page": "101",
+            "end_page": "115",
+            "issn": "0000-0000",
+            "pmid": "99999901",
+            "doi": "10.9999/sbtest.t02",
+            "publisher": "Sandbox Press",
+            "place_of_publication": "Tel Aviv",
+            "note": "T-02 settability probe",
+            "bib_note": "T-02 bib note probe",
+            "specific_edition": True,
+            "need_patron_info": False,
+            "maximum_fee": 0.0,
+            "lcc_number": "SHEBA-TAU-9001 Test Patron",
+        },
+    )),
+    # Add T-04a/T-07/T-09 from the matrix as they are run.
 }
 
 
