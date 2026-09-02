@@ -143,5 +143,41 @@ Test layering for this repo (mirrors the analytics model; adapted because **this
 3. `poetry update almaapitk` then `poetry run pytest` (offline). Run the L3 SANDBOX smoke manually with `RUN_LIVE_SMOKE=1`.
 4. While running L3, confirm stdout shows no unmasked `user_id` from the toolkit logger (§E verification).
 5. Re-verify on the masedet prod workstation per its own `poetry install` before merging `main` → `prod`.
+
+---
+
+# Later bumps
+
+## 0.5.0 → 0.5.1 (2026-09-02) — **SAFE, and required**
+
+**Why bumped:** this repo found the bug. `utils/citation_metadata.py` read the
+publication year only from `PubDate/Year`, but PubMed omits `<Year>` whenever
+the issue's cover date is irregular — a month range, a season, a year span —
+and puts the whole date in `<MedlineDate>` ("2023 Jan-Feb 01"). Those records
+came back with `year=''`, and the borrowing builder skipped the request because
+Alma rejects an article citation with no year (`401930`). The file then stayed
+in `input_borrowing/` and the scheduled task re-fetched PubMed for it every
+minute. AlmaAPITK #214, fixed in PR #215, released as `v0.5.1`.
+
+**Scope of the delta:** one function, `_parse_pubmed_xml`. The year now falls
+back to the first 4-digit year inside `PubDate/MedlineDate`, then to
+`ArticleDate/Year`, and the raw string is exposed as a new `medline_date` key.
+No existing key changes shape, no signature moves, Crossref is untouched, and
+`domains/resource_sharing.py` — the entire lending write path audited in §(a)
+above — is unchanged. `publication_date` deliberately stays a joined
+year/month/day rather than the raw `MedlineDate` string, because
+`resource_sharing.py` passes `publication_date` straight into Alma's `year`
+field and free text must not leak there.
+
+**Effect here:** strictly additive. A year that used to be empty is now
+populated; the lending path, which reads `publication_date`, gains a year on
+the same records instead of sending `''`. No caller changes were needed.
+
+**Verification:** `tests/test_almaapitk_floor.py` pins the reason for the
+floor offline — canned MedlineDate-only PubMed XML through the installed
+toolkit, through this repo's `fetch_citation_metadata`, and through
+`BorrowingRequestBuilder.build()`. All three pass on 0.5.1 and fail on 0.5.0,
+so a floor lowered by accident is caught by `pytest` rather than in production.
+Full offline suite: 112 passed, 1 skipped.
 </content>
 </invoke>

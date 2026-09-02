@@ -2,14 +2,14 @@
 
 [[package]]
 name = "almaapitk"
-version = "0.5.0"
+version = "0.5.1"
 description = "Python toolkit for the Ex Libris Alma ILS API"
 optional = false
 python-versions = ">=3.12"
 groups = ["main"]
 files = [
-    {file = "almaapitk-0.5.0-py3-none-any.whl", hash = "sha256:16db31d4932830d5c1ab4978af4a400c491cd7e8c2fb58c69a59fb534b534244"},
-    {file = "almaapitk-0.5.0.tar.gz", hash = "sha256:045682d2dd0e6d0c2f14a4527292594f98d6837726f96464c099689e343e9526"},
+    {file = "almaapitk-0.5.1-py3-none-any.whl", hash = "sha256:778127d150964a3972f7ce0c16a00d6e3132ccd288baaffc15663a135e57d53e"},
+    {file = "almaapitk-0.5.1.tar.gz", hash = "sha256:73cd874d0058ea2f68ba4f4e9a9884e6f7826004e5ab426bd2c14d2e386a06d6"},
 ]
 
 [package.dependencies]
@@ -302,4 +302,4 @@ zstd = ["backports-zstd (>=1.0.0) ; python_version < \"3.14\""]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12"
-content-hash = "2159737f357fee612ea4a5b97ad08d5a8255c161ca94ffc9cef114c8e53c2a96"
+content-hash = "18839154c85faf13f4c524f984cafceb4ea1c1ef7bf19ea815a0c2c6f32aeeb0"

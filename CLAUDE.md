@@ -52,7 +52,7 @@ poetry run python resource_sharing_forms_processor.py --config config/rs_forms_c
 - Python 3.12+, managed via Poetry
 - `ALMA_SB_API_KEY` — Required for SANDBOX environment
 - `ALMA_PROD_API_KEY` — Required for PRODUCTION environment
-- Depends on `almaapitk` (PyPI, pinned `>=0.5.0` — floor ships `build_user_rs_request` + the `validate=` pre-flight; the 0.4.5 logging credential-leak fix is included)
+- Depends on `almaapitk` (PyPI, pinned `>=0.5.1` — floor ships `build_user_rs_request` + the `validate=` pre-flight, and the PubMed `MedlineDate` year fix borrowing needs; the 0.4.5 logging credential-leak fix is included)
 
 ## Deployment
 

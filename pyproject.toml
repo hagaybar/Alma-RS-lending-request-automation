@@ -17,7 +17,12 @@ python = "^3.12"
 # Raised to >=0.5.0: build_user_rs_request and the validate= pre-flight on
 # Users.create_user_rs_request are absent below this (merged upstream
 # 2026-07-22, PR #206). Borrowing support cannot function on an older floor.
-almaapitk = ">=0.5.0"
+# Raised to >=0.5.1: below this, get_pubmed_metadata reads the year only from
+# PubDate/Year, so any article whose PubMed record carries an irregular cover
+# date in <MedlineDate> ("2023 Jan-Feb 01") came back with year='' and the
+# borrowing builder skipped it — Alma rejects an article citation with no year
+# (401930). Hit in production 2026-09-02; AlmaAPITK #214.
+almaapitk = ">=0.5.1"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0"
