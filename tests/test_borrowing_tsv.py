@@ -8,7 +8,7 @@ from resource_sharing_forms_processor import (
 from tests.borrowing_fixtures import CONFIG
 
 
-def _proc(tmp_path, columns=None):
+def _proc(tmp_path, columns=None, scheduled_mode=False):
     cfg = dict(CONFIG)
     cfg["file_processing"] = {
         "input_folder": str(tmp_path / "input"),
@@ -24,7 +24,8 @@ def _proc(tmp_path, columns=None):
         cfg["borrowing"]["columns"] = columns
     (tmp_path / "input").mkdir(exist_ok=True)
     (tmp_path / "input_borrowing").mkdir(exist_ok=True)
-    return ResourceSharingFormsProcessor(cfg, dry_run=True)
+    return ResourceSharingFormsProcessor(cfg, dry_run=True,
+                                         scheduled_mode=scheduled_mode)
 
 
 def test_parses_the_two_settled_columns(tmp_path):
@@ -186,3 +187,66 @@ def test_disabled_borrowing_skips_the_file(tmp_path):
     proc.borrowing_config = {**proc.borrowing_config, "enabled": False}
     result = proc.process_tsv_file(f, kind="borrowing")
     assert result["status"] == "skipped"
+
+
+def test_detected_type_survives_a_build_failure(tmp_path, monkeypatch):
+    """A failure *after* detection must not read as a detection failure.
+
+    detected_type used to reach the result only through built.summary, which a
+    raising build() never produces. Real case 2026-09-02: PMID 36374288 is a
+    MedlineDate-only PubMed record ("2023 Jan-Feb 01", no <Year>), so the year
+    came back empty, build() rejected the article, and the per-file log printed
+    "Identifier Type (detected): N/A" for an identifier that had in fact been
+    detected as a PMID.
+    """
+    import rs_requests.metadata as md
+    monkeypatch.setattr(md, "DRY_RUN_METADATA",
+                        {k: v for k, v in md.DRY_RUN_METADATA.items()
+                         if k != "year"})
+
+    f = tmp_path / "input_borrowing" / "r.tsv"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("SHEB\t36374288\n", encoding="utf-8")
+
+    result = _proc(tmp_path).process_tsv_file(f, kind="borrowing")
+
+    assert result["status"] == "skipped"
+    assert "requires year" in result["error_message"]
+    assert result["detected_type"] == "pmid"
+
+
+def test_file_log_names_the_detected_type_when_the_build_fails(tmp_path,
+                                                               monkeypatch):
+    """The scheduled-mode per-file log is what the librarians read."""
+    import rs_requests.metadata as md
+    monkeypatch.setattr(md, "DRY_RUN_METADATA",
+                        {k: v for k, v in md.DRY_RUN_METADATA.items()
+                         if k != "year"})
+
+    f = tmp_path / "input_borrowing" / "r.tsv"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("SHEB\t36374288\n", encoding="utf-8")
+
+    proc = _proc(tmp_path, scheduled_mode=True)
+    proc.process_tsv_file(f, kind="borrowing")
+
+    logs = list((tmp_path / "output" / "file_logs").glob("*.log"))
+    assert len(logs) == 1
+    text = logs[0].read_text(encoding="utf-8")
+    assert "Identifier Type (detected): pmid" in text
+    assert "requires year" in text
+
+
+def test_file_log_says_not_detected_rather_than_blank(tmp_path):
+    """An undetectable identifier must be stated as such, not left empty —
+    empty is indistinguishable from "the field was never filled in"."""
+    f = tmp_path / "input_borrowing" / "r.tsv"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("SHEB\tnot-an-id\n", encoding="utf-8")
+
+    proc = _proc(tmp_path, scheduled_mode=True)
+    proc.process_tsv_file(f, kind="borrowing")
+
+    text = next((tmp_path / "output" / "file_logs").glob("*.log")).read_text(
+        encoding="utf-8")
+    assert "Identifier Type (detected): not detected" in text
