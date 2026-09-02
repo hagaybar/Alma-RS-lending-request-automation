@@ -874,6 +874,17 @@ class ResourceSharingFormsProcessor:
                     'order_number': form_data['order_number']
                 })
 
+            # Stamp the detected type BEFORE the build. Detection is a pure
+            # regex over the identifier (no I/O), so running it here costs
+            # nothing and makes the per-file log and the daily report honest
+            # when a later step fails: detected_type otherwise arrived only
+            # via built.summary, which a raising build() never produces, so
+            # every post-detection failure printed "N/A" and read as a
+            # detection failure (2026-09-02, PMID 36374288 — PubMed gave no
+            # year, but the log blamed identifier detection).
+            result['detected_type'] = self.detect_identifier_type(
+                form_data['identifier']) or ''
+
             # Create request (lending or borrowing, per kind)
             request_result = self.create_request_from_form(form_data, kind=kind)
             result.update(request_result)
@@ -1207,7 +1218,12 @@ class ResourceSharingFormsProcessor:
         # Partner / identifier info
         lines.append(f"Partner Code: {result.get('partner_code', 'N/A')}")
         lines.append(f"Identifier: {result.get('identifier', 'N/A')}")
-        lines.append(f"Identifier Type (detected): {result.get('detected_type', 'N/A')}")
+        # 'not detected' rather than blank/N/A: the reader needs to tell "the
+        # identifier could not be typed" apart from "this field was never
+        # filled in" — the two used to look identical (2026-09-02).
+        lines.append(
+            f"Identifier Type (detected): "
+            f"{result.get('detected_type') or 'not detected'}")
         lines.append("")
 
         # Metadata
