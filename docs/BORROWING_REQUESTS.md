@@ -538,30 +538,30 @@ Two refinements were agreed as conditions:
 This is the part that decides whether "create everything and let the
 librarians decide" is even possible, so it is recorded as an observed
 timeline rather than a summary. SANDBOX request `43256811230004146`
-(§10.6 B′), created by API with `override_blocks=True`, **untouched by any
-human afterwards**:
+(§10.6 B′), created by API with `override_blocks=True`:
 
-| Time (UTC) | Status | Partner |
-|---|---|---|
-| 11:06:01 — create response | `LOCATE_IN_PROCESS` "Locate in process" | `TLL` — **RapidILL** |
-| 11:17:11 — +11 min, no human action | `READY_TO_SEND` "Ready to be sent" | `TUSM-ISO` — **TUSM** |
+| Time (UTC) | Status | Partner | Who |
+|---|---|---|---|
+| 11:06:01 — create response | `LOCATE_IN_PROCESS` "Locate in process" | `TLL` — **RapidILL** | **Alma**, on create |
+| before 11:17 | `READY_TO_SEND` "Ready to be sent" | `TLL` — **RapidILL** | **Alma**, no human action |
+| 11:17:11 | `READY_TO_SEND` | `TUSM-ISO` — **TUSM** | **a colleague, by hand** |
 
-Two things follow.
+**Alma locates and advances the request by itself.** It assigned a partner on
+create and moved the request to *Ready to be sent* with nobody approving
+either step. A request created this way is inside the supply workflow before
+any librarian could look at it — which is exactly what "let the librarians
+decide" requires not to happen.
 
-**The rota runs itself.** Alma assigned RapidILL on create, then within
-eleven minutes moved the request on to a different, ISO partner. Nobody
-approved either step. A request created this way is already inside the
-supply workflow before any librarian could look at it.
-
-**The partner Alma picks is not the one it starts with.** The create response
-said RapidILL; eleven minutes later it said TUSM. Reading the partner out of
-the create response and reporting it would be reporting something already
-stale — this pipeline should not do that.
+The later partner change was **manual**, not the rota, and the request had
+already reached `READY_TO_SEND` before it. Nothing here says Alma hops
+partners on its own; that is neither observed nor claimed.
 
 `OPEN`: whether `READY_TO_SEND` transmits on its own or waits for staff is
-**not yet established**. It is the last link in the chain, and it decides
-whether a librarian review step exists at all. Watching the same request is
-the cheapest way to settle it.
+**not yet established**, and it is the link that decides whether a review
+step exists at all. Note this particular request can no longer settle it —
+it has been worked on by hand since 11:17, so any further movement is
+unattributable. Answering it cleanly needs an untouched request, or an
+answer from Ex Libris (§10.8).
 
 ### 10.8 The question for the RS team
 
