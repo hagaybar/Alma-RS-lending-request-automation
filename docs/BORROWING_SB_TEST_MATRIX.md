@@ -369,6 +369,9 @@ Fill in as tests are run. **A request created and not cancelled is a defect.**
 | T-01 (passed, flag `true`) | none sent, stored *empty* | `39940482970004146` | SHEB | ❌ kept for UI inspection (user request) | 2026-07-30 |
 | T-02 (passed) | sent `SBTEST-T02-20260720`, stored *empty* | `39940483500004146` | SHEB | ❌ kept for UI inspection (user request) | 2026-07-30 |
 | T-02b (passed) | sent `SBTEST-T02B-20260730`, stored *empty* | `39940484010004146` | SHEB | ❌ kept for UI inspection (user request) | 2026-07-30 |
+| `401604` probe A (no override) | — | — (create rejected, `401604`; nothing to clean) | SHEB | n/a | 2026-09-03 |
+| `401604` probe B (`override_blocks=True`) | none sent, stored `972TAU0075698` | `43256809970004146` | SHEB | ✅ yes (cancelled, **not** removed — still visible as Cancelled) | 2026-09-03 |
+| `401604` probe B′ (re-create, kept live) | none sent, stored `972TAU0075699` | `43256811230004146` | WOLF | ❌ kept live for UI inspection (user request) | 2026-09-03 |
 
 Outstanding from 2026-07-19 (created before this matrix existed, still not
 cleaned up): `39940155760004146`, `39940156450004146`, `39940157570004146`.

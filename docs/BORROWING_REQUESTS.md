@@ -485,15 +485,50 @@ three above moves a file.
 outcome rather than an infinite retry, and whether the operator wants these
 surfaced for manual handling. Awaiting the RS librarians / operator.
 
-### 10.6 `override_blocks` — policy unchanged, mechanism unverified
+### 10.6 `override_blocks` **does** clear `401604` — `VERIFIED` 2026-09-03
 
-DECISION 2026-07-22 stands: **never pass `override_blocks`.** Auto-clearing
-a self-ownership warning would create borrowing requests for material the
-institution really can supply.
+The plan document assumed `override_blocks=true` is the API equivalent of the
+UI's **Confirm** button, but `override_blocks` is documented as a *patron
+block* override (`create_user_rs_request` docstring, almaapitk), so this was
+carried as `UNVERIFIED`. It has now been probed in SANDBOX with the exact
+production payload for PMID `36374288` (matrix §4, three rows):
 
-Note also that the plan document assumed `override_blocks=true` is the API
-equivalent of the UI's **Confirm** button. That has **not** been tested —
-`override_blocks` is documented as a *patron block* override
-(`create_user_rs_request` docstring, almaapitk). Whether it clears `401604`
-at all is `UNVERIFIED`, and given the policy above there is no reason to
-find out.
+| Attempt | Result |
+|---|---|
+| **A** — no override | `AlmaAPIError`, `alma_code` `401604`, immediate |
+| **B** — `override_blocks=True` | **Created.** `request_id` `43256809970004146`, ~20s |
+| **B′** — re-created under `WOLF`, kept live | `43256811230004146`, status **`LOCATE_IN_PROCESS`**, partner **`TLL` (RapidILL)** assigned by the rota |
+
+So one flag turns a hard `401604` into a normal, fully-routed borrowing
+request. Two incidental confirmations from the B′ response:
+
+- `external_id` came back `972TAU0075699` — Alma's own broker id, not ours.
+  Independent re-confirmation of §8.1.
+- The stored `issn` is **`1062-8606`** — the *print* ISSN of bib
+  `9932873215504146`, not the `1555-824X` we sent. Alma's augmentation
+  resolved our citation to the very bib whose single portfolio stops in 2020
+  (§10.2), which is the self-ownership match, visible in the saved record.
+
+**A cancelled request may still count as a duplicate.** B was cancelled
+(HTTP 204, `remove_request` not set, so it survives as *Cancelled*); an
+identical re-POST under the same patron seconds later was refused `402362`.
+Observed once — whether that is replication lag or a genuine rule is
+undetermined, and it qualifies §8.2's "active requests only". B′ therefore
+had to run under a different proxy user.
+
+**Policy — under review, not yet changed.** DECISION 2026-07-22 ("never pass
+`override_blocks`") was reasoned from the assumption §10.4 has now falsified.
+The operator has proposed the opposite default: **create in all cases and let
+the librarians decide**, reviewing in Alma rather than gatekeeping in code.
+Two refinements were agreed as conditions:
+
+1. Override only on **retry after a `401604`** — never on the first attempt —
+   so ordinary requests do not carry it and genuine patron blocks (fines,
+   expired accounts, loan limits) stay enforced.
+2. **Stamp the request** (the `note` field persists, §4.4) so an
+   override-created request is identifiable in the Alma task list; otherwise
+   it is indistinguishable from any other and the librarian must re-check
+   everything.
+
+`OPEN`: the librarians' sign-off. Until then the code is unchanged and
+`401604` still fails as an error row (§10.5).
