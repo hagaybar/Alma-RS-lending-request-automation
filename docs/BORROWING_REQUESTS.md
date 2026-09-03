@@ -556,20 +556,40 @@ The later partner change was **manual**, not the rota, and the request had
 already reached `READY_TO_SEND` before it. Nothing here says Alma hops
 partners on its own; that is neither observed nor claimed.
 
-`OPEN`: whether `READY_TO_SEND` transmits on its own or waits for staff is
-**not yet established**, and it is the link that decides whether a review
-step exists at all. Note this particular request can no longer settle it —
-it has been worked on by hand since 11:17, so any further movement is
-unattributable. Answering it cleanly needs an untouched request, or an
-answer from Ex Libris (§10.8).
+**`SETTLED` 2026-09-03 — it sends itself.** Alma went on to *attempt the
+send* to RapidILL with no staff action. It did not leave the building only
+because SANDBOX is not wired to transmit; that failure is what prompted the
+manual partner change, which was a colleague testing the send by another
+route. `VERIFIED` by the operator's colleague in the Alma UI, not by a probe
+in this session.
+
+So there is **no human gate anywhere in the chain**. From
+`create_user_rs_request(..., override_blocks=True)` to an outgoing ILL
+request, nothing waits for a librarian. In production, that request would
+have gone to RapidILL.
 
 ### 10.8 The question for the RS team
 
 §10.6 recorded the operator's proposal — create in all cases, let the
-librarians decide — and §10.7 is why it cannot simply be adopted: by the
-time a librarian sees the request, Alma has already located a partner and
-moved it toward sending. **"Let the librarians decide" needs a place in the
-workflow where deciding is still possible, and we have not found one.**
+librarians decide — and §10.7 rules it out as stated: Alma locates a partner
+and attempts the send with no staff action, so **there is no point in the
+workflow at which a librarian could decide.** Creating the request *is*
+sending it.
+
+That makes this a policy question, not a technical one, and it is narrower
+than it first appears. **Every borrowing request this pipeline creates
+already goes out unreviewed** — the ordinary ones never raise `401604`, so
+nobody looks at them either. Staff are not being asked to accept unreviewed
+auto-sending; they already have it. They are being asked one thing:
+
+> When Alma raises its self-ownership flag, is LibKey's article-level check
+> a good enough reason to clear it automatically?
+
+§10.1–10.2 is the case that it is: the flag is coverage-blind by
+construction, so on this population it is a false positive unless LibKey is
+wrong. The risk being accepted is precisely **LibKey being wrong, or Power
+Automate misrouting** — in which case we would order an ILL for something a
+patron could have had from our own subscription.
 
 What the team needs to choose between:
 
@@ -586,12 +606,14 @@ What the team needs to choose between:
    these requests stop somewhere a librarian works through them. Whether
    Alma can be configured to do that — a workflow-profile step, a partner
    that does not auto-send, or a customer parameter — is a question for
-   Ex Libris, not something this repo can answer.
+   Ex Libris, not something this repo can answer. This is the only option
+   that delivers what "let the librarians decide" was reaching for, and it
+   is the only one whose feasibility is unknown.
 
-Questions to put to Ex Libris regardless of the choice: does
-`READY_TO_SEND` send without staff action, and can the self-ownership check
-be made coverage-aware (or the API given the UI's **Confirm** semantics)
-rather than all-or-nothing?
+Worth putting to Ex Libris regardless of the choice: can the self-ownership
+check be made **coverage-aware**, or the API given the UI's **Confirm**
+semantics, instead of being all-or-nothing? Either would remove the need to
+override at all.
 
 `OPEN` (2026-09-03): awaiting the RS team. Until they answer, the code is
 unchanged — `401604` fails as an error row and the file retries (§10.5).
