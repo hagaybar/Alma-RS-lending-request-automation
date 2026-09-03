@@ -532,3 +532,66 @@ Two refinements were agreed as conditions:
 
 `OPEN`: the librarians' sign-off. Until then the code is unchanged and
 `401604` still fails as an error row (§10.5).
+
+### 10.7 What Alma does with an override-created request — no human gate observed
+
+This is the part that decides whether "create everything and let the
+librarians decide" is even possible, so it is recorded as an observed
+timeline rather than a summary. SANDBOX request `43256811230004146`
+(§10.6 B′), created by API with `override_blocks=True`, **untouched by any
+human afterwards**:
+
+| Time (UTC) | Status | Partner |
+|---|---|---|
+| 11:06:01 — create response | `LOCATE_IN_PROCESS` "Locate in process" | `TLL` — **RapidILL** |
+| 11:17:11 — +11 min, no human action | `READY_TO_SEND` "Ready to be sent" | `TUSM-ISO` — **TUSM** |
+
+Two things follow.
+
+**The rota runs itself.** Alma assigned RapidILL on create, then within
+eleven minutes moved the request on to a different, ISO partner. Nobody
+approved either step. A request created this way is already inside the
+supply workflow before any librarian could look at it.
+
+**The partner Alma picks is not the one it starts with.** The create response
+said RapidILL; eleven minutes later it said TUSM. Reading the partner out of
+the create response and reporting it would be reporting something already
+stale — this pipeline should not do that.
+
+`OPEN`: whether `READY_TO_SEND` transmits on its own or waits for staff is
+**not yet established**. It is the last link in the chain, and it decides
+whether a librarian review step exists at all. Watching the same request is
+the cheapest way to settle it.
+
+### 10.8 The question for the RS team
+
+§10.6 recorded the operator's proposal — create in all cases, let the
+librarians decide — and §10.7 is why it cannot simply be adopted: by the
+time a librarian sees the request, Alma has already located a partner and
+moved it toward sending. **"Let the librarians decide" needs a place in the
+workflow where deciding is still possible, and we have not found one.**
+
+What the team needs to choose between:
+
+1. **Manual creation.** `401604` files are parked and reported; a librarian
+   creates the request in Alma, sees the self-ownership warning, and clicks
+   **Confirm** — or doesn't. Full review, no new failure modes, costs
+   librarian time on every occurrence, and §10.4 says occurrences will be
+   routine.
+2. **Auto-override, no review.** We create with `override_blocks=True` on
+   retry after a `401604`. Requests go out without a librarian seeing them.
+   The safety net is upstream: LibKey already established we cannot supply
+   the article. Cheapest, and irreversible per request once sent.
+3. **Auto-override plus an Alma-side hold.** Same as 2, but configured so
+   these requests stop somewhere a librarian works through them. Whether
+   Alma can be configured to do that — a workflow-profile step, a partner
+   that does not auto-send, or a customer parameter — is a question for
+   Ex Libris, not something this repo can answer.
+
+Questions to put to Ex Libris regardless of the choice: does
+`READY_TO_SEND` send without staff action, and can the self-ownership check
+be made coverage-aware (or the API given the UI's **Confirm** semantics)
+rather than all-or-nothing?
+
+`OPEN` (2026-09-03): awaiting the RS team. Until they answer, the code is
+unchanged — `401604` fails as an error row and the file retries (§10.5).
