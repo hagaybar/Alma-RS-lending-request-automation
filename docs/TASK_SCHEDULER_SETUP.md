@@ -77,6 +77,13 @@ This causes the task to fire once at boot, then repeat every minute indefinitely
 
 ### 3.5 Action tab
 
+> **Batch names have moved on since this was written.** `rs_forms_scheduled.bat`
+> no longer exists: it was renamed to `batch/rs_forms_scheduled_dev_sb.bat`
+> (commit `afa8777`), which targets `D:\Scripts\DevSandbox\` and SANDBOX.
+> Production runs `batch/rs_forms_monitor_prod.bat`, which is local-only and
+> gitignored. See [masedet-prod-runbook.md](masedet-prod-runbook.md) §7 — it is
+> the authority on what prod actually runs, and on the cadence.
+
 1. Click **New**.
 2. Action: **Start a program**.
 3. Program/script:
@@ -199,7 +206,7 @@ Rotating log (10-day retention) recording every folder scan. Useful for confirmi
 
 **Fix:** Either:
 - Add Poetry to the System PATH (e.g., `C:\Users\<user>\AppData\Roaming\Python\Scripts` or wherever Poetry is installed), or
-- Edit `batch\rs_forms_scheduled.bat` to use the full path to `poetry.exe`.
+- Edit the batch file the task actually runs (see the note in §3.5 — on prod that is `batch\rs_forms_monitor_prod.bat`) to use the full path to `poetry.exe`.
 
 ### No heartbeat entries in run log
 

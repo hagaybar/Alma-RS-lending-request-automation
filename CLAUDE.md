@@ -57,13 +57,15 @@ poetry run python resource_sharing_forms_processor.py --config config/rs_forms_c
 ## Deployment
 
 - Runs on a **remote physical Windows machine** (not WSL/cloud)
-- **Production mode**: Windows Task Scheduler fires `batch/rs_forms_scheduled.bat` every 1 minute in single-run mode (`--live` without `--watch`)
+- **Production mode**: Windows Task Scheduler on masedet runs the processor in single-run mode (`--live` without `--watch`). It fires `batch/rs_forms_monitor_prod.bat`, which is **local-only and gitignored — not in this repo**. Per [docs/masedet-prod-runbook.md](docs/masedet-prod-runbook.md) §7 the real cadence is **every 5 minutes**, not the 1 minute these docs used to claim; that section also carries the standing TODO to track the prod batch for parity with its sandbox sibling
 - **Lock file**: `output/.processor.lock` prevents overlapping executions; includes PID-based stale-lock detection
 - **Three scheduled-mode output channels**:
   - Per-file log (`output/file_logs/`) — detailed trace for each processed TSV
   - Daily CSV report (`output/reports/processed_{YYYYMMDD}.csv`) — tabular summary
   - Daily run log (`output/logs/runs_{YYYYMMDD}.log`) — heartbeat confirming every invocation
-- **Batch files**: `batch/rs_forms_scheduled.bat` (production) and `batch/rs_forms_scheduled_sandbox.bat` (testing)
+- **Batch files** — both tracked ones `cd` to `D:\Scripts\DevSandbox\` and run SANDBOX:
+  - `batch/rs_forms_scheduled_dev_sb.bat` — scheduled single-run, `config\tests-config.json --live`
+  - `batch/rs_forms_monitor_sandbox.bat` — legacy watch mode, `config\rs_forms_config.json --watch --live`
 - **Rollback**: Disable the scheduled task and run `batch/rs_forms_monitor_sandbox.bat` for legacy watch mode
 - See [docs/TASK_SCHEDULER_SETUP.md](docs/TASK_SCHEDULER_SETUP.md) for full setup instructions
 
