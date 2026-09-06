@@ -28,6 +28,15 @@ from rs_requests.pii import mask_lcc_number
 #: (A/B probe 2026-07-22) and appears in 0 of 1912 real requests.
 ALLOWED_CITATION_TYPES = ("CR",)
 
+#: Marker appended to `note` when Alma's self-ownership block (401604) is
+#: cleared. These requests are sent without any human step, so this is the
+#: only handle on them in Alma afterwards — see docs/BORROWING_REQUESTS.md §10.
+SELF_OWNERSHIP_STAMP = (
+    "[auto] Alma 401604 self-ownership overridden: the title is held, the "
+    "requested year is outside coverage, and no article-level access was "
+    "found upstream."
+)
+
 
 class BorrowingRequestBuilder(RequestBuilder):
     kind = "borrowing"
@@ -175,36 +184,71 @@ class BorrowingRequestBuilder(RequestBuilder):
         # __init__); reuse it rather than constructing a second one.
         users = self.processor.users
         hospital = built.summary["requestor"]
-        try:
-            # validate=True (almaapitk >= 0.5.0): a wrong code-table value
-            # raises AlmaValidationError naming the field BEFORE any HTTP.
-            response = users.create_user_rs_request(
-                hospital, built.payload, validate=True)
-        except AlmaValidationError as e:
-            # AlmaValidationError subclasses ValueError, NOT AlmaAPIError, so
-            # without this clause it escapes to the processor's generic
-            # handler as a retryable 'error' — retried every minute for what
-            # is actually a permanent config typo (e.g. an undocumented
-            # code-table value). Re-raise as BorrowingValidationError, which
-            # the processor's except ladder maps to a permanent 'skipped'.
-            raise BorrowingValidationError(str(e)) from e
-        except AlmaAPIError as e:
-            if self._is_duplicate_rejection(e):
-                # DECISION 2026-07-20 (GH #35): Alma's duplicate check IS the
-                # safety mechanism. This fires when an identical request is
-                # already active for this patron — most importantly when a
-                # previous run's create timed out AFTER saving. Treat as
-                # already created: report it and let the file move out of
-                # input, ending the retry loop.
-                self.processor.logger.warning(
-                    f"  Alma rejected as duplicate (402362): an identical "
-                    f"active request already exists for {hospital} — "
-                    f"treating as already created."
-                )
-                return {"status": "duplicate",
-                        "request_id": "",   # unknowable — Alma doesn't say which
-                        "external_id": built.external_id, **built.summary}
-            raise
+        cfg = self.processor.borrowing_config
+        payload, override = built.payload, False
+
+        # At most two passes: the plain create, then — only for Alma's
+        # self-ownership block — one retry carrying override_blocks.
+        for attempt in (1, 2):
+            try:
+                # validate=True (almaapitk >= 0.5.0): a wrong code-table value
+                # raises AlmaValidationError naming the field BEFORE any HTTP.
+                response = users.create_user_rs_request(
+                    hospital, payload, validate=True,
+                    **({"override_blocks": True} if override else {}))
+            except AlmaValidationError as e:
+                # AlmaValidationError subclasses ValueError, NOT AlmaAPIError,
+                # so without this clause it escapes to the processor's generic
+                # handler as a retryable 'error' — retried every minute for
+                # what is actually a permanent config typo (e.g. an
+                # undocumented code-table value). Re-raise as
+                # BorrowingValidationError, which the processor's except
+                # ladder maps to a permanent 'skipped'.
+                raise BorrowingValidationError(str(e)) from e
+            except AlmaAPIError as e:
+                if self._is_duplicate_rejection(e):
+                    # DECISION 2026-07-20 (GH #35): Alma's duplicate check IS
+                    # the safety mechanism. This fires when an identical
+                    # request is already active for this patron — most
+                    # importantly when a previous run's create timed out AFTER
+                    # saving. Treat as already created: report it and let the
+                    # file move out of input, ending the retry loop.
+                    self.processor.logger.warning(
+                        f"  Alma rejected as duplicate (402362): an identical "
+                        f"active request already exists for {hospital} — "
+                        f"treating as already created."
+                    )
+                    return {"status": "duplicate",
+                            "request_id": "",   # unknowable — Alma doesn't say which
+                            "external_id": built.external_id,
+                            "self_ownership_override": override,
+                            **built.summary}
+                if (attempt == 1 and self._is_self_ownership_rejection(e)
+                        and cfg.get("override_self_ownership", True)):
+                    # DECISION 2026-09-03 (RS team approval; guidebook §10).
+                    # Alma's Self Ownership check is title-level and never
+                    # consults coverage, so it fires on every article in a
+                    # journal we hold for other years. Power Automate's LibKey
+                    # check — article-level, coverage-aware — is what put this
+                    # file on the borrowing path at all, so a 401604 here means
+                    # "we hold the journal, not this article". Clear it and
+                    # retry once.
+                    #
+                    # Only on the retry, never on the first attempt: the same
+                    # flag also clears genuine patron blocks (fines, expired
+                    # accounts, loan limits), and nothing approved disabling
+                    # those for ordinary requests.
+                    self.processor.logger.warning(
+                        f"  Alma blocked the create with 401604 (institutional "
+                        f"inventory has services for the title). That check is "
+                        f"title-level and coverage-blind; LibKey already found "
+                        f"no article-level access. Retrying with "
+                        f"override_blocks — guidebook §10."
+                    )
+                    payload, override = self._stamp_override(built.payload), True
+                    continue
+                raise
+            break
         # requests.RequestException (socket timeout, connection reset) is
         # deliberately NOT caught: almaapitk does not wrap transport errors
         # (GH #9; re-verified on the 2026-07-22 main), and re-raising is
@@ -214,8 +258,38 @@ class BorrowingRequestBuilder(RequestBuilder):
         data = response.data or {}
         self.processor.logger.info("✓ Borrowing request created")
         self.processor.logger.info(f"  Request ID: {data.get('request_id')}")
+        if override:
+            self.processor.logger.info(
+                "  Self-ownership block was overridden (401604)")
         return {"status": "success", "request_id": data.get("request_id"),
-                "external_id": built.external_id, **built.summary}
+                "external_id": built.external_id,
+                "self_ownership_override": override, **built.summary}
+
+    @staticmethod
+    def _stamp_override(payload: Dict[str, Any]) -> Dict[str, Any]:
+        """A copy of the payload whose ``note`` names the override.
+
+        An override-created request goes straight out — Alma locates a partner
+        and attempts the send with no staff action (guidebook §10.7) — so this
+        marker is the only way to recognise one in Alma afterwards. The
+        requester's own note is preserved; ``note`` persists as sent (§9).
+        """
+        stamped = dict(payload)
+        note = (stamped.get("note") or "").strip()
+        stamped["note"] = f"{note} {SELF_OWNERSHIP_STAMP}".strip()
+        return stamped
+
+    @staticmethod
+    def _is_self_ownership_rejection(e: AlmaAPIError) -> bool:
+        """True when Alma refused the create because it holds the *title*.
+
+        Same shape as :meth:`_is_duplicate_rejection`: alma_code is the
+        structural match, the message substring covers error bodies the
+        toolkit could not parse into a code.
+        """
+        if getattr(e, "alma_code", "") == "401604":
+            return True
+        return "has services for the requested title" in str(e).lower()
 
     @staticmethod
     def _is_duplicate_rejection(e: AlmaAPIError) -> bool:

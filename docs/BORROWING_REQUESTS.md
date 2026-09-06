@@ -471,19 +471,37 @@ in years we do not**. Expect it from
 - journals that changed publisher, and
 - any request for a year outside a live subscription's coverage.
 
-### 10.5 What the pipeline does with it today
+### 10.5 What the pipeline does with it — `IMPLEMENTED` 2026-09-03
 
-`AlmaAPIError` is not in the processor's `except` ladder, so `401604` falls
-through to the generic `except Exception` → status `error`, message
-`Unexpected error: Warning - …`. `error` is not in the move list
-(`success`, `dry_run_success`, `duplicate`), so the file **stays in
-`input_borrowing/` and the scheduled task re-POSTs it every minute,
-indefinitely**. `skipped` would not move it either — no status except the
-three above moves a file.
+**Before** (kept for the record): `AlmaAPIError` was not in the processor's
+`except` ladder, so `401604` fell through to the generic `except Exception` →
+status `error`, message `Unexpected error: Warning - …`. `error` is not in
+the move list (`success`, `dry_run_success`, `duplicate`), so the file stayed
+in `input_borrowing/` and the scheduled task re-POSTed it every minute,
+indefinitely. `skipped` would not have moved it either — no status except
+those three moves a file.
 
-**OPEN (2026-09-03):** whether a `401604` should become a permanent, parked
-outcome rather than an infinite retry, and whether the operator wants these
-surfaced for manual handling. Awaiting the RS librarians / operator.
+**Now**, per the RS team's approval (§10.8), `BorrowingRequestBuilder.submit`
+retries the create **once**, carrying `override_blocks=True`, and the file
+completes as a normal `success`. Three things are deliberate:
+
+- **Only on the retry.** The first attempt never carries the flag, because
+  the same flag also clears genuine patron blocks — fines, expired accounts,
+  loan limits — and nothing approved disabling those for ordinary requests.
+  Ordinary creates are byte-identical to before.
+- **The retry is stamped.** `SELF_OWNERSHIP_STAMP` is appended to `note`
+  (the requester's own note is kept). An override-created request is sent
+  with no human step (§10.7), so this is the only handle on one in Alma
+  afterwards. Our side records it on the per-file log line
+  `Self-Ownership (401604): OVERRIDDEN`.
+- **It is a kill switch, not a hardcoding.** `borrowing.override_self_ownership`
+  defaults to `true`; set it `false` to restore the old behaviour without a
+  code change, exactly like `borrowing.enabled`.
+
+A `402362` on the retry still means "already created" — the retry is a
+re-POST, so it can meet Alma's duplicate check like any other (§8.2). A
+second `401604` is a genuine failure and raises; the override is never
+applied twice.
 
 ### 10.6 `override_blocks` **does** clear `401604` — `VERIFIED` 2026-09-03
 
@@ -568,7 +586,31 @@ So there is **no human gate anywhere in the chain**. From
 request, nothing waits for a librarian. In production, that request would
 have gone to RapidILL.
 
-### 10.8 The question for the RS team
+### 10.8 The decision — `SETTLED` 2026-09-03, option 2
+
+**The RS team approved clearing the self-ownership block automatically.**
+Option 2 below is what shipped; §10.5 is the implementation. The operator's
+reasoning, recorded because it is the premise the approval rests on:
+
+> The Primo ILL request form, which is open to end users, already drives this
+> same API with data the user typed. So requests reaching Alma unreviewed,
+> from unvetted input, is the existing state of affairs — not something this
+> change introduces.
+
+One correction to that premise, which strengthens rather than weakens it:
+Primo's path does **not** hit the check we are overriding. Through Primo,
+"self-ownership is determined by resolving the incoming OpenURL to an
+existing resource, and is therefore based on the resolver's matching
+mechanism" (§10.1) — resolver matching *is* coverage-aware, so the end-user
+form never needs an override in the first place. Overriding here does not
+make the API riskier than Primo; it makes it behave like Primo.
+
+`OPEN`, and not blocking: whether the API and the Primo form are literally
+the same endpoint has not been verified, only assumed.
+
+---
+
+The options as they stood before the decision, kept for the record:
 
 §10.6 recorded the operator's proposal — create in all cases, let the
 librarians decide — and §10.7 rules it out as stated: Alma locates a partner
@@ -598,10 +640,11 @@ What the team needs to choose between:
    **Confirm** — or doesn't. Full review, no new failure modes, costs
    librarian time on every occurrence, and §10.4 says occurrences will be
    routine.
-2. **Auto-override, no review.** We create with `override_blocks=True` on
-   retry after a `401604`. Requests go out without a librarian seeing them.
-   The safety net is upstream: LibKey already established we cannot supply
-   the article. Cheapest, and irreversible per request once sent.
+2. **Auto-override, no review.** ← **CHOSEN.** We create with
+   `override_blocks=True` on retry after a `401604`. Requests go out without
+   a librarian seeing them. The safety net is upstream: LibKey already
+   established we cannot supply the article. Cheapest, and irreversible per
+   request once sent.
 3. **Auto-override plus an Alma-side hold.** Same as 2, but configured so
    these requests stop somewhere a librarian works through them. Whether
    Alma can be configured to do that — a workflow-profile step, a partner

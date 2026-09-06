@@ -87,5 +87,8 @@ poetry run python resource_sharing_forms_processor.py --config config/rs_forms_c
   title-level (matches Title / ISBN-ISSN / LCCN / System Control Number) and
   never consults coverage dates, while Power Automate's LibKey check is
   article-level. Both are right, and they disagree on every article in a
-  journal we hold for other years — `docs/BORROWING_REQUESTS.md` §10. It
-  currently lands in the generic error branch, so the file retries every minute
+  journal we hold for other years — `docs/BORROWING_REQUESTS.md` §10. Since
+  2026-09-03 the builder clears it: one retry with `override_blocks`, stamped
+  into `note`, gated by `borrowing.override_self_ownership` (default true).
+  The override is applied **only on that retry** — the same flag also clears
+  genuine patron blocks, and only the self-ownership case was approved

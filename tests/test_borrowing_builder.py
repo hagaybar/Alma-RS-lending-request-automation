@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 import requests
 
@@ -193,3 +195,143 @@ def test_transport_timeout_reraises_for_the_next_scheduled_run():
     with pytest.raises(requests.exceptions.ReadTimeout):
         _builder_with(users).submit(_build())
     assert users.creates == 1
+
+
+# --- submit(): Alma's self-ownership block (401604) --------------------------
+#
+# Alma's Self Ownership check is title-level and coverage-blind
+# (docs/BORROWING_REQUESTS.md §10). Power Automate's LibKey check, which put
+# the file on this path at all, is article-level. So a 401604 here means "we
+# hold the journal, for other years" — not "we can supply this article".
+# RS team approved clearing it automatically, 2026-09-03 (§10.8).
+
+class _FakeUsersSeq:
+    """Users stand-in that plays a scripted sequence of outcomes.
+
+    Each entry is either an exception to raise or a dict to return as
+    ``response.data``. Records the kwargs and body of every call.
+    """
+
+    def __init__(self, *outcomes):
+        self.outcomes = list(outcomes)
+        self.calls = []          # list of (request_data, kwargs)
+
+    def create_user_rs_request(self, user_id, request_data, **kw):
+        self.calls.append((request_data, kw))
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return SimpleNamespace(data=outcome)
+
+    @property
+    def creates(self):
+        return len(self.calls)
+
+
+def _self_ownership_error(code="401604"):
+    return _alma_error(
+        "Warning - The institutional inventory has services for the "
+        "requested title.", code)
+
+
+def test_self_ownership_block_is_retried_with_the_override():
+    """401604 must not fail the file: retry once with override_blocks=True."""
+    users = _FakeUsersSeq(_self_ownership_error(),
+                          {"request_id": "43256811230004146"})
+    result = _builder_with(users).submit(_build())
+
+    assert users.creates == 2
+    assert result["status"] == "success"
+    assert result["request_id"] == "43256811230004146"
+
+
+def test_the_first_attempt_never_carries_the_override():
+    """Refinement agreed 2026-09-03: override only on retry, so an ordinary
+    create cannot silently clear a genuine patron block (fines, expired
+    account, loan limit)."""
+    users = _FakeUsersSeq({"request_id": "1"})
+    _builder_with(users).submit(_build())
+
+    assert users.creates == 1
+    assert users.calls[0][1].get("override_blocks") is None
+
+
+def test_only_the_retry_carries_the_override():
+    users = _FakeUsersSeq(_self_ownership_error(), {"request_id": "1"})
+    _builder_with(users).submit(_build())
+
+    assert users.calls[0][1].get("override_blocks") is None
+    assert users.calls[1][1]["override_blocks"] is True
+    # The pre-flight stays on for the retry too.
+    assert users.calls[1][1].get("validate") is True
+
+
+def test_the_retry_is_stamped_so_it_can_be_found_later():
+    """These requests go straight out (§10.7), so the only way to audit one
+    afterwards is a marker on the request itself."""
+    users = _FakeUsersSeq(_self_ownership_error(), {"request_id": "1"})
+    built = _build(form={"notes": "urgent please"})
+    _builder_with(users).submit(built)
+
+    note = users.calls[1][0]["note"]
+    assert "urgent please" in note          # the requester's note survives
+    assert "401604" in note
+
+
+def test_the_stamp_does_not_leak_into_the_first_attempt():
+    users = _FakeUsersSeq(_self_ownership_error(), {"request_id": "1"})
+    _builder_with(users).submit(_build(form={"notes": "urgent please"}))
+
+    assert users.calls[0][0].get("note") == "urgent please"
+
+
+def test_the_result_records_that_the_override_was_used():
+    users = _FakeUsersSeq(_self_ownership_error(), {"request_id": "1"})
+    result = _builder_with(users).submit(_build())
+    assert result["self_ownership_override"] is True
+
+    users = _FakeUsersSeq({"request_id": "1"})
+    assert _builder_with(users).submit(_build())["self_ownership_override"] is False
+
+
+def test_self_ownership_matches_by_message_when_the_code_is_missing():
+    users = _FakeUsersSeq(_self_ownership_error(code=""),
+                          {"request_id": "1"})
+    assert _builder_with(users).submit(_build())["status"] == "success"
+    assert users.creates == 2
+
+
+def test_the_override_can_be_switched_off_in_config():
+    """Kill switch, matching borrowing.enabled: pause the behaviour without
+    a code change. Off means 401604 propagates as before."""
+    users = _FakeUsersSeq(_self_ownership_error())
+    builder = _builder_with(users)
+    builder.processor.borrowing_config = {
+        **FakeProcessor.borrowing_config, "override_self_ownership": False}
+
+    with pytest.raises(AlmaAPIError):
+        builder.submit(_build())
+    assert users.creates == 1
+
+
+def test_a_duplicate_on_the_retry_is_still_recognised():
+    """The retry re-POSTs, so it can hit Alma's duplicate check exactly as a
+    next-run re-POST would (§8.2) — that must still mean 'already created',
+    not an error."""
+    users = _FakeUsersSeq(
+        _self_ownership_error(),
+        _alma_error("Failed to save the request: Patron has duplicate request",
+                    "402362"))
+    result = _builder_with(users).submit(_build())
+
+    assert result["status"] == "duplicate"
+    assert users.creates == 2
+
+
+def test_the_override_is_not_applied_twice():
+    """If the override itself is refused 401604, that is a genuine failure —
+    never loop."""
+    users = _FakeUsersSeq(_self_ownership_error(), _self_ownership_error())
+    with pytest.raises(AlmaAPIError):
+        _builder_with(users).submit(_build())
+    assert users.creates == 2
