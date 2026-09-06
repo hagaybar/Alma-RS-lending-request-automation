@@ -215,7 +215,7 @@ There are **two**, and they are unrelated:
 | `external_id` sent on POST is **discarded** — Alma substitutes a `972TAU…` broker id; external lookup for our value returns "No result found" | `VERIFIED` 2026-07-20 (§8) |
 | The `402362` duplicate check is **config-dependent**: customer parameter `check_patron_duplicate_borrowing_requests`, **false by default**, enabled at TAU. Active requests only; compares user + citation fields (Title, ISBN, Volume…) | `VERIFIED` live + Ex Libris FAQ, 2026-07-20 (§8) |
 | `override_blocks=true` pushed a create past a 60s timeout; without it the same body returned in ~3s | `VERIFIED` 2026-07-19. Treat override as a workaround, not the recipe |
-| `401604` "institutional inventory has services for the requested title" blocks a create with HTTP 400 despite the "Warning" wording | `VERIFIED` 2026-07-19. Should be rare here — Power Automate has already established we do *not* hold the item |
+| `401604` "institutional inventory has services for the requested title" blocks a create with HTTP 400 despite the "Warning" wording | `VERIFIED` 2026-07-19. ~~Should be rare here — Power Automate has already established we do *not* hold the item.~~ **Wrong — see §10.** Alma's check is *title-level* self-ownership; Power Automate's is *article-level*. They disagree on every article we hold the journal for but not the year, so this is a routine outcome, not a rare one. Re-hit in production 2026-09-03 |
 | The identifier column is **free text** — requesters type the label in with the value (`PMID: 15320862`). Stripped at the borrowing parse site by `normalize_identifier()`; see [IDENTIFIER_DETECTION.md](IDENTIFIER_DETECTION.md) | `VERIFIED` in production on the lending path, issue #7 |
 
 ### Error codes
@@ -226,7 +226,7 @@ There are **two**, and they are unrelated:
 | `401768` | Patron not affiliated with a resource sharing library |
 | `401929` | `pickup_location` not a valid borrowing pickup for `owner` |
 | `401930` | Missing mandatory article fields (Journal Title, Publication Date, Author) |
-| `401604` | Institution already has services for the title — blocks create |
+| `401604` | Institution already has services for **the title** — blocks create. Alma's *Self Ownership* check, matched on bib fields only (Title, ISBN/ISSN, LCCN, System Control Number); coverage dates are **not** consulted, so it fires on articles we cannot actually supply — §10 |
 | `402362` | Patron has duplicate request |
 | `40166422` | `request_id` invalid for this `user_id` |
 | `Invalid field value … {1}` | A code-table value from the wrong table (Alma cannot say which field) |
@@ -372,3 +372,291 @@ inherits as evidence. All `VERIFIED` live unless noted.
   `39940273040004146`, `39940273500004146` (chunk test),
   `39940276180004146` (hospital-format demo). They are **not** this
   project's leftovers; see the matrix cleanup log before touching them.
+
+## 10. `401604` is a title-level self-ownership check — 2026-09-03
+
+Production borrowing file `9_2_2026 11_46_25 AM.tsv`, PMID `36374288`, was
+rejected with:
+
+```
+Unexpected error: Warning - The institutional inventory has services for the
+requested title.
+```
+
+The request is an *article*; the thing Alma found is the *journal*. This
+section records why those are not the same question, and why the 2026-07-22
+assumption that `401604` would be rare here is wrong.
+
+### 10.1 What Alma is checking
+
+Ex Libris calls this the **Self Ownership** check, and documents it as a
+bibliographic match:
+
+> "The Self Ownership check determines whether a requested resource is
+> locally owned at the requester's institution."
+
+> "The record is located based on the selected Locate by Fields values on the
+> Organization Unit Details page"
+
+— defaulting, when nothing is configured, to **LCCN, System Control Number,
+Title, and ISBN/ISSN**
+([Locating Items for Resource Sharing](https://knowledge.exlibrisgroup.com/Alma/Product_Documentation/010Alma_Online_Help_(English)/030Fulfillment/050Resource_Sharing/Resource_Sharing_Configuration/Locating_Items_for_Resource_Sharing)).
+
+Every one of those four is a field of the **bib record**. None is
+article-level, and none carries the citation's year, volume or issue — so
+the check cannot distinguish "we hold this journal" from "we can supply this
+article". In the UI the same check is a warning the operator clears by hand:
+
+> "If local resources exist but you are creating a resource-sharing request
+> in any case, a self-ownership warning message appears when you save the
+> request." … "if you are sure you want to create the borrowing request,
+> select Confirm."
+
+([Creating a Borrowing Request](https://knowledge.exlibrisgroup.com/Alma/Product_Documentation/010Alma_Online_Help_(English)/030Fulfillment/050Resource_Sharing/010Resource_Sharing_Workflow/Borrowing_Requests/010Creating_a_Borrowing_Request))
+
+Over the API there is no Confirm: the create fails, HTTP 400, `401604`,
+"Warning" wording and all.
+
+**The vendor documentation is silent on electronic coverage.** It says what
+the check matches on; it does not say whether coverage dates are consulted.
+§10.2 settles that by demonstration.
+
+### 10.2 `VERIFIED` 2026-09-03 — coverage is not consulted
+
+Read-only SANDBOX reads (`GET /bibs/{mms_id}`, `GET /bibs/{mms_id}/portfolios`),
+confirmed independently by the operator in the production Alma UI:
+
+| | |
+|---|---|
+| Citation (PubMed `36374288`) | *American journal of medical quality*, **2023**, vol **38**, issue 1, pp 23–28, DOI `10.1097/JMQ.0000000000000095`, e-ISSN `1555-824X` |
+| Bib matched | `9932873215504146` — "American journal of medical quality.", ISSN `1062-8606` |
+| Inventory | exactly **one** portfolio, `53328251740004146`, availability **Available** |
+| In collection | `61328259000004146` — "Sage Journals All Titles" (selective package, active) |
+| Coverage — global | 1993-03-01 v8(1) → **2020-12-31 v35(6)** |
+| Coverage — local | 1986 v1(1) → **2020 v35(6)** |
+| Perpetual coverage | none |
+
+The requested article is **three years and three volumes past the end of
+every coverage statement on the only portfolio there is**, and Alma still
+answered *"the institutional inventory has services for the requested
+title"*. The check matched the title and never looked at coverage.
+`VERIFIED` by demonstration, not by vendor documentation.
+
+The journal changed publisher — the `10.1097` DOI prefix is Lippincott,
+while the portfolio we hold is Sage — which is why the coverage stops where
+it does.
+
+### 10.3 Power Automate and Alma are both right
+
+The upstream fork asks **LibKey** whether *this article* is available. That
+is an article-level, coverage-aware question, and its answer here — not
+held — is correct: we cannot supply a 2023 article from a portfolio that
+ends in 2020. So the file was routed to `input_borrowing/` correctly.
+
+Alma then asks a different question — *does the institution have any service
+for this title?* — and its answer, yes, is also correct.
+
+Neither system is wrong, and neither is misconfigured. They disagree because
+they are answering different questions.
+
+### 10.4 Consequence: `401604` is **not** rare here
+
+§5 recorded, on 2026-07-19, that `401604` "should be rare here — Power
+Automate has already established we do *not* hold the item". That reasoning
+does not hold. The two checks disagree systematically on precisely the
+population this pipeline exists to serve: **articles from journals we hold,
+in years we do not**. Expect it from
+
+- packages with an end date (cancelled, moved, or transferred titles),
+- journals that changed publisher, and
+- any request for a year outside a live subscription's coverage.
+
+### 10.5 What the pipeline does with it — `IMPLEMENTED` 2026-09-03
+
+**Before** (kept for the record): `AlmaAPIError` was not in the processor's
+`except` ladder, so `401604` fell through to the generic `except Exception` →
+status `error`, message `Unexpected error: Warning - …`. `error` is not in
+the move list (`success`, `dry_run_success`, `duplicate`), so the file stayed
+in `input_borrowing/` and the scheduled task re-POSTed it every minute,
+indefinitely. `skipped` would not have moved it either — no status except
+those three moves a file.
+
+**Now**, per the RS team's approval (§10.8), `BorrowingRequestBuilder.submit`
+retries the create **once**, carrying `override_blocks=True`, and the file
+completes as a normal `success`. Three things are deliberate:
+
+- **Only on the retry.** The first attempt never carries the flag, because
+  the same flag also clears genuine patron blocks — fines, expired accounts,
+  loan limits — and nothing approved disabling those for ordinary requests.
+  Ordinary creates are byte-identical to before.
+- **The retry is stamped.** `SELF_OWNERSHIP_STAMP` is appended to `note`
+  (the requester's own note is kept). An override-created request is sent
+  with no human step (§10.7), so this is the only handle on one in Alma
+  afterwards. Our side records it on the per-file log line
+  `Self-Ownership (401604): OVERRIDDEN`.
+- **It is a kill switch, not a hardcoding.** `borrowing.override_self_ownership`
+  defaults to `true`; set it `false` to restore the old behaviour without a
+  code change, exactly like `borrowing.enabled`.
+
+A `402362` on the retry still means "already created" — the retry is a
+re-POST, so it can meet Alma's duplicate check like any other (§8.2). A
+second `401604` is a genuine failure and raises; the override is never
+applied twice.
+
+### 10.6 `override_blocks` **does** clear `401604` — `VERIFIED` 2026-09-03
+
+The plan document assumed `override_blocks=true` is the API equivalent of the
+UI's **Confirm** button, but `override_blocks` is documented as a *patron
+block* override (`create_user_rs_request` docstring, almaapitk), so this was
+carried as `UNVERIFIED`. It has now been probed in SANDBOX with the exact
+production payload for PMID `36374288` (matrix §4, three rows):
+
+| Attempt | Result |
+|---|---|
+| **A** — no override | `AlmaAPIError`, `alma_code` `401604`, immediate |
+| **B** — `override_blocks=True` | **Created.** `request_id` `43256809970004146`, ~20s |
+| **B′** — re-created under `WOLF`, kept live | `43256811230004146`, status **`LOCATE_IN_PROCESS`**, partner **`TLL` (RapidILL)** assigned by the rota |
+
+So one flag turns a hard `401604` into a normal, fully-routed borrowing
+request. Two incidental confirmations from the B′ response:
+
+- `external_id` came back `972TAU0075699` — Alma's own broker id, not ours.
+  Independent re-confirmation of §8.1.
+- The stored `issn` is **`1062-8606`** — the *print* ISSN of bib
+  `9932873215504146`, not the `1555-824X` we sent. Alma's augmentation
+  resolved our citation to the very bib whose single portfolio stops in 2020
+  (§10.2), which is the self-ownership match, visible in the saved record.
+
+**A cancelled request may still count as a duplicate.** B was cancelled
+(HTTP 204, `remove_request` not set, so it survives as *Cancelled*); an
+identical re-POST under the same patron seconds later was refused `402362`.
+Observed once — whether that is replication lag or a genuine rule is
+undetermined, and it qualifies §8.2's "active requests only". B′ therefore
+had to run under a different proxy user.
+
+**Policy — under review, not yet changed.** DECISION 2026-07-22 ("never pass
+`override_blocks`") was reasoned from the assumption §10.4 has now falsified.
+The operator has proposed the opposite default: **create in all cases and let
+the librarians decide**, reviewing in Alma rather than gatekeeping in code.
+Two refinements were agreed as conditions:
+
+1. Override only on **retry after a `401604`** — never on the first attempt —
+   so ordinary requests do not carry it and genuine patron blocks (fines,
+   expired accounts, loan limits) stay enforced.
+2. **Stamp the request** (the `note` field persists, §4.4) so an
+   override-created request is identifiable in the Alma task list; otherwise
+   it is indistinguishable from any other and the librarian must re-check
+   everything.
+
+`OPEN`: the librarians' sign-off. Until then the code is unchanged and
+`401604` still fails as an error row (§10.5).
+
+### 10.7 What Alma does with an override-created request — no human gate observed
+
+This is the part that decides whether "create everything and let the
+librarians decide" is even possible, so it is recorded as an observed
+timeline rather than a summary. SANDBOX request `43256811230004146`
+(§10.6 B′), created by API with `override_blocks=True`:
+
+| Time (UTC) | Status | Partner | Who |
+|---|---|---|---|
+| 11:06:01 — create response | `LOCATE_IN_PROCESS` "Locate in process" | `TLL` — **RapidILL** | **Alma**, on create |
+| before 11:17 | `READY_TO_SEND` "Ready to be sent" | `TLL` — **RapidILL** | **Alma**, no human action |
+| 11:17:11 | `READY_TO_SEND` | `TUSM-ISO` — **TUSM** | **a colleague, by hand** |
+
+**Alma locates and advances the request by itself.** It assigned a partner on
+create and moved the request to *Ready to be sent* with nobody approving
+either step. A request created this way is inside the supply workflow before
+any librarian could look at it — which is exactly what "let the librarians
+decide" requires not to happen.
+
+The later partner change was **manual**, not the rota, and the request had
+already reached `READY_TO_SEND` before it. Nothing here says Alma hops
+partners on its own; that is neither observed nor claimed.
+
+**`SETTLED` 2026-09-03 — it sends itself.** Alma went on to *attempt the
+send* to RapidILL with no staff action. It did not leave the building only
+because SANDBOX is not wired to transmit; that failure is what prompted the
+manual partner change, which was a colleague testing the send by another
+route. `VERIFIED` by the operator's colleague in the Alma UI, not by a probe
+in this session.
+
+So there is **no human gate anywhere in the chain**. From
+`create_user_rs_request(..., override_blocks=True)` to an outgoing ILL
+request, nothing waits for a librarian. In production, that request would
+have gone to RapidILL.
+
+### 10.8 The decision — `SETTLED` 2026-09-03, option 2
+
+**The RS team approved clearing the self-ownership block automatically.**
+Option 2 below is what shipped; §10.5 is the implementation. The operator's
+reasoning, recorded because it is the premise the approval rests on:
+
+> The Primo ILL request form, which is open to end users, already drives this
+> same API with data the user typed. So requests reaching Alma unreviewed,
+> from unvetted input, is the existing state of affairs — not something this
+> change introduces.
+
+One correction to that premise, which strengthens rather than weakens it:
+Primo's path does **not** hit the check we are overriding. Through Primo,
+"self-ownership is determined by resolving the incoming OpenURL to an
+existing resource, and is therefore based on the resolver's matching
+mechanism" (§10.1) — resolver matching *is* coverage-aware, so the end-user
+form never needs an override in the first place. Overriding here does not
+make the API riskier than Primo; it makes it behave like Primo.
+
+`OPEN`, and not blocking: whether the API and the Primo form are literally
+the same endpoint has not been verified, only assumed.
+
+---
+
+The options as they stood before the decision, kept for the record:
+
+§10.6 recorded the operator's proposal — create in all cases, let the
+librarians decide — and §10.7 rules it out as stated: Alma locates a partner
+and attempts the send with no staff action, so **there is no point in the
+workflow at which a librarian could decide.** Creating the request *is*
+sending it.
+
+That makes this a policy question, not a technical one, and it is narrower
+than it first appears. **Every borrowing request this pipeline creates
+already goes out unreviewed** — the ordinary ones never raise `401604`, so
+nobody looks at them either. Staff are not being asked to accept unreviewed
+auto-sending; they already have it. They are being asked one thing:
+
+> When Alma raises its self-ownership flag, is LibKey's article-level check
+> a good enough reason to clear it automatically?
+
+§10.1–10.2 is the case that it is: the flag is coverage-blind by
+construction, so on this population it is a false positive unless LibKey is
+wrong. The risk being accepted is precisely **LibKey being wrong, or Power
+Automate misrouting** — in which case we would order an ILL for something a
+patron could have had from our own subscription.
+
+What the team needs to choose between:
+
+1. **Manual creation.** `401604` files are parked and reported; a librarian
+   creates the request in Alma, sees the self-ownership warning, and clicks
+   **Confirm** — or doesn't. Full review, no new failure modes, costs
+   librarian time on every occurrence, and §10.4 says occurrences will be
+   routine.
+2. **Auto-override, no review.** ← **CHOSEN.** We create with
+   `override_blocks=True` on retry after a `401604`. Requests go out without
+   a librarian seeing them. The safety net is upstream: LibKey already
+   established we cannot supply the article. Cheapest, and irreversible per
+   request once sent.
+3. **Auto-override plus an Alma-side hold.** Same as 2, but configured so
+   these requests stop somewhere a librarian works through them. Whether
+   Alma can be configured to do that — a workflow-profile step, a partner
+   that does not auto-send, or a customer parameter — is a question for
+   Ex Libris, not something this repo can answer. This is the only option
+   that delivers what "let the librarians decide" was reaching for, and it
+   is the only one whose feasibility is unknown.
+
+Worth putting to Ex Libris regardless of the choice: can the self-ownership
+check be made **coverage-aware**, or the API given the UI's **Confirm**
+semantics, instead of being all-or-nothing? Either would remove the need to
+override at all.
+
+`OPEN` (2026-09-03): awaiting the RS team. Until they answer, the code is
+unchanged — `401604` fails as an error row and the file retries (§10.5).

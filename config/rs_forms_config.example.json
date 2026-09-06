@@ -29,6 +29,7 @@
     "default_citation_type": "CR",
     "requested_media": "7",
     "agree_to_copyright_terms": true,
+    "override_self_ownership": true,
     "lcc_number_template": "",
     "columns": {"requestor": 0, "identifier": 1, "notes": 2, "order_number": 3},
     "allowed_hospitals": ["ASAF", "BEIL", "IC", "LE", "ME", "SHEB", "SHH", "WOLF"]
@@ -45,6 +46,7 @@
     "borrowing.enabled: explicit kill switch, default true (DECISION 2026-07-30) — configuring borrowing_input_folder is the activation decision; set false to pause borrowing without touching the folder or the PA flow",
     "borrowing scope (DECISION 2026-07-22): articles only — CR + DIGITAL. material_type is NOT in the default column mapping (PA sends 4 columns); the builder uses default_citation_type. If PA adds the column, map it in borrowing.columns — any value other than CR is then rejected before any API call",
     "borrowing.agree_to_copyright_terms: RESOLVED 2026-07-30 (SB test T-04) — must be true; Alma rejects false at create (401897). The 98/100 false seen on manual requests is a UI-population artifact",
+    "borrowing.override_self_ownership: kill switch, default true (RS team approval 2026-09-03, guidebook §10). When Alma blocks a create with 401604 ('the institutional inventory has services for the requested title'), retry once with override_blocks and stamp the note. That check is title-level and ignores coverage dates, while Power Automate's LibKey check — which routed the file here — is article-level, so a 401604 on this path means we hold the journal for other years. The override is applied ONLY on that retry, never on the first attempt, because the same flag clears genuine patron blocks too. Set false to restore the old behaviour (401604 fails the file)",
     "borrowing.lcc_number_template: OPEN — pending the librarians. Placeholders: {hospital} {order_number} {patron_name}. Empty means omit the field",
     "borrowing.allowed_hospitals: proxy user codes; a file naming any other requestor is rejected before any API call"
   ]

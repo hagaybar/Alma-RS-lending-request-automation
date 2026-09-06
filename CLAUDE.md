@@ -83,3 +83,12 @@ poetry run python resource_sharing_forms_processor.py --config config/rs_forms_c
 - A borrowing create can time out and still save — recovery is Alma's own `402362`
   duplicate rejection on the next run's re-POST (see the Decision record in Task 5),
   which depends on `check_patron_duplicate_borrowing_requests=true` in config
+- **`401604` is not a bug and not rare.** Alma's *Self Ownership* check is
+  title-level (matches Title / ISBN-ISSN / LCCN / System Control Number) and
+  never consults coverage dates, while Power Automate's LibKey check is
+  article-level. Both are right, and they disagree on every article in a
+  journal we hold for other years — `docs/BORROWING_REQUESTS.md` §10. Since
+  2026-09-03 the builder clears it: one retry with `override_blocks`, stamped
+  into `note`, gated by `borrowing.override_self_ownership` (default true).
+  The override is applied **only on that retry** — the same flag also clears
+  genuine patron blocks, and only the self-ownership case was approved

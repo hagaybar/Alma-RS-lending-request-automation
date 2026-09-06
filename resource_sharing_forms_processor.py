@@ -1240,6 +1240,13 @@ class ResourceSharingFormsProcessor:
         lines.append(f"Status: {result.get('status', 'N/A')}")
         lines.append(f"Request ID: {result.get('request_id', 'N/A')}")
         lines.append(f"External ID: {result.get('external_id', 'N/A')}")
+        # Only when it happened: an override-created request is sent with no
+        # human step, so the per-file log is where our side records it
+        # (the Alma-side handle is the note stamp) — guidebook §10.
+        if result.get('self_ownership_override'):
+            lines.append(
+                "Self-Ownership (401604): OVERRIDDEN — Alma holds the title, "
+                "the requested year is outside coverage")
         lines.append("")
 
         # Error info if any
