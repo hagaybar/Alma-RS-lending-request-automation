@@ -684,14 +684,22 @@ Three live SANDBOX calls, one payload, built by the production code path with
 `borrowing.override_self_ownership: false` so the first attempt is the only
 attempt:
 
+The document sends **one clean pair under one patron** (`BEIL`):
+
 | Call | Query | Result |
 |---|---|---|
-| A | *(none)* | HTTP 400 `401604`, 7.7s — tracking `E01-1409095747-SS4OE-AWAE1612166395` |
-| B | `?override_blocks=true` | HTTP 200, 11.1s — `43257185010004146` (`SHEB`), since cancelled |
-| B′ | `?override_blocks=true` | HTTP 200, 2.0s — `43257186260004146` (`ASAF`), **left live for Ex Libris** |
+| A | *(none)* | HTTP 400 `401604`, 0.97s — tracking `E01-1409104651-MZCFH-AWAE1612166395` |
+| B | `?override_blocks=true` | HTTP 200, 2.5s — **`43257186940004146`**, `972TAU0075709`, **left live for Ex Libris** |
 
 Call A also ran with `Accept: application/xml`; the XML body carries the same
-`401604` (tracking `E01-1409095748-ZYFO9-AWAE1612166395`).
+`401604` (tracking `E01-1409104652-56N5E-AWAE1612166395`).
+
+Two earlier override probes the same morning are **not** referenced by the
+document and exist only in the test matrix: `43257185010004146` (`SHEB`,
+cancelled) and `43257186260004146` (`ASAF`, still live). The vendor-facing
+document names exactly one request, by operator instruction — showing a
+cancelled id for a record they are asked to open is a self-inflicted
+distraction.
 
 Three things this capture settles or re-confirms:
 
@@ -704,13 +712,14 @@ Three things this capture settles or re-confirms:
   e-ISSN in our payload — alongside `023 $a 1062-8606`, `010 $a 2005212289`
   and four `035` control numbers. Title, ISSN, LCCN and System Control Number
   all match: every field in the documented default Locate-by set.
-- **§10.7 re-confirmed, and faster than before.** B′ read back as
-  `READY_TO_SEND` with partner `TLL` (RapidILL) about **two seconds** after
-  the create. The 2026-09-03 timeline needed a UI check to see the
-  advance; here it had already happened by the first GET.
+- **§10.7 re-confirmed.** Every override-created request in this batch came
+  back from the create with partner `TLL` (RapidILL) already assigned, and
+  the `ASAF` probe read back as `READY_TO_SEND` about **two seconds** after
+  the create. The 2026-09-03 timeline needed a UI check to see that advance;
+  here it had already happened by the first GET.
 
 `OPEN`: the vendor's answers. The Product Manager's position as relayed on
 2026-09-14 is that "this error is not supposed to occur", which section 5 of
 the report contradicts directly — reconciling that is the point of sending it.
 
-**Do not cancel `43257186260004146` until the case closes** (test matrix §4).
+**Do not cancel `43257186940004146` until the case closes** (test matrix §4) — it is the one request the document names.
