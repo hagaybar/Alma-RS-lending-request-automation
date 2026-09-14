@@ -718,8 +718,30 @@ Three things this capture settles or re-confirms:
   the create. The 2026-09-03 timeline needed a UI check to see that advance;
   here it had already happened by the first GET.
 
-`OPEN`: the vendor's answers. The Product Manager's position as relayed on
-2026-09-14 is that "this error is not supposed to occur", which section 5 of
-the report contradicts directly — reconciling that is the point of sending it.
+**`SENT` 2026-09-14.** The report went to Ex Libris carrying the three
+questions from the original case, unchanged:
 
-**Do not cancel `43257186940004146` until the case closes** (test matrix §4) — it is the one request the document names.
+1. Which validation or blocking conditions does the override parameter
+   actually bypass?
+2. Is the institutional-inventory check based only on a title match, or are
+   additional matching criteria used?
+3. When a user submits an ILL request through the Primo Resource Sharing form,
+   is the request creation performed through this same API endpoint?
+
+Two further questions were drafted and **deliberately not sent** (operator
+decision): whether the Self Ownership check can be made coverage-aware, and
+whether an override-created request can be held for staff review rather than
+reaching `READY_TO_SEND` unattended. They remain worth asking if the vendor's
+reply reopens either subject — §10.8 option 3 depends on the second.
+
+The Product Manager's position as relayed on 2026-09-14 — that "this error is
+not supposed to occur" — is contradicted by §5 of the report, and reconciling
+that is what the capture was sent to do.
+
+`OPEN`: the vendor's answers.
+
+**Do not cancel `43257186940004146`** (test matrix §4) — it is the one request
+the document names, and Ex Libris may open it at any time. `43257186260004146`
+(`ASAF`) also stays: the operator ruled on 2026-09-14 that SANDBOX leftovers
+from this case are not worth cleaning up. Both are exceptions to test matrix
+rule 6, which otherwise still stands.
