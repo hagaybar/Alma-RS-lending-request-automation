@@ -534,6 +534,17 @@ Observed once — whether that is replication lag or a genuine rule is
 undetermined, and it qualifies §8.2's "active requests only". B′ therefore
 had to run under a different proxy user.
 
+> **`VERIFIED` 2026-09-14 — it is a rule, not replication lag.** The same
+> sequence ran again while capturing evidence for the Ex Libris case
+> (§10.9): create under `SHEB` with `override_blocks=True` → cancel →
+> identical re-POST under `SHEB` **two minutes later** → `402362` "Patron
+> has duplicate request" (tracking ID `E01-1409101906-JRTJG-AWAE673038864`).
+> Two minutes is far outside any plausible replication window, and the
+> 2026-09-03 SANDBOX twin had been cancelled eleven days earlier without
+> freeing the patron either. **Alma's duplicate check counts cancelled
+> requests.** §8.2's "active requests only" is wrong and automated tests
+> must keep using per-run unique titles.
+
 **Policy — under review, not yet changed.** DECISION 2026-07-22 ("never pass
 `override_blocks`") was reasoned from the assumption §10.4 has now falsified.
 The operator has proposed the opposite default: **create in all cases and let
@@ -660,3 +671,55 @@ override at all.
 
 `OPEN` (2026-09-03): awaiting the RS team. Until they answer, the code is
 unchanged — `401604` fails as an error row and the file retries (§10.5).
+
+### 10.9 The Ex Libris case — evidence capture, 2026-09-14
+
+Ex Libris asked for "the API request you ran and the XML", for an article
+outside TAU's coverage whose journal title we hold. That capture lives in
+[docs/exlibris-case-401604-report.md](exlibris-case-401604-report.md); it is
+the vendor-facing document and is kept in sync with this section, not the
+other way round.
+
+Three live SANDBOX calls, one payload, built by the production code path with
+`borrowing.override_self_ownership: false` so the first attempt is the only
+attempt:
+
+The document sends **one clean pair under one patron** (`BEIL`):
+
+| Call | Query | Result |
+|---|---|---|
+| A | *(none)* | HTTP 400 `401604`, 0.97s — tracking `E01-1409104651-MZCFH-AWAE1612166395` |
+| B | `?override_blocks=true` | HTTP 200, 2.5s — **`43257186940004146`**, `972TAU0075709`, **left live for Ex Libris** |
+
+Call A also ran with `Accept: application/xml`; the XML body carries the same
+`401604` (tracking `E01-1409104652-56N5E-AWAE1612166395`).
+
+Two earlier override probes the same morning are **not** referenced by the
+document and exist only in the test matrix: `43257185010004146` (`SHEB`,
+cancelled) and `43257186260004146` (`ASAF`, still live). The vendor-facing
+document names exactly one request, by operator instruction — showing a
+cancelled id for a record they are asked to open is a self-inflicted
+distraction.
+
+Three things this capture settles or re-confirms:
+
+- **§10.2 holds, from the API rather than the UI.** `GET .../holdings` returns
+  `total_record_count: 0`; the single portfolio's `coverage_details` shows
+  `coverage_in_use: "Only local"`, local coverage **1986 v1(1) → 2020 v35(6)**,
+  global **1993 → 2020 v35(6)**, and **no perpetual coverage**. The article is
+  2023 v38(1).
+- **The bib carries the exact ISSN we send.** `022 $a` is `1555-824X` — the
+  e-ISSN in our payload — alongside `023 $a 1062-8606`, `010 $a 2005212289`
+  and four `035` control numbers. Title, ISSN, LCCN and System Control Number
+  all match: every field in the documented default Locate-by set.
+- **§10.7 re-confirmed.** Every override-created request in this batch came
+  back from the create with partner `TLL` (RapidILL) already assigned, and
+  the `ASAF` probe read back as `READY_TO_SEND` about **two seconds** after
+  the create. The 2026-09-03 timeline needed a UI check to see that advance;
+  here it had already happened by the first GET.
+
+`OPEN`: the vendor's answers. The Product Manager's position as relayed on
+2026-09-14 is that "this error is not supposed to occur", which section 5 of
+the report contradicts directly — reconciling that is the point of sending it.
+
+**Do not cancel `43257186940004146` until the case closes** (test matrix §4) — it is the one request the document names.
