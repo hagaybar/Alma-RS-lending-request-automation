@@ -5,30 +5,21 @@ Prepared for the open Ex Libris support case. Tel Aviv University.
 
 ---
 
-> **Internal note — read before sending, then delete this block.**
->
-> 1. This capture was run against **SANDBOX**, because the production
->    occurrence (2026-09-02) cannot be re-run safely: the production pipeline
->    now clears `401604` automatically, so a live production re-run would
->    create and send a real ILL request. Say the word and the same capture can
->    be produced against PRODUCTION — the create is *rejected*, so nothing
->    would be created there either, but it is a production call and needs your
->    go-ahead.
-> 2. The earlier case text said *"when using the `override=true` parameter"*.
->    The parameter this endpoint defines is **`override_blocks`**, not
->    `override`. Decide how you want to correct that before sending. This
->    report deliberately sends **no override parameter of any kind**, so what
->    follows is Alma's plain default behaviour and is not affected either way.
-> 3. Section 6 does not disclose what happens *with* `override_blocks=true`.
->    That is a separate decision.
-
----
-
 ## 1. What this report shows
 
-One API call, captured byte-for-byte: a borrowing (user resource-sharing)
-request for a **journal article that Tel Aviv University cannot supply**, for
-which Alma nevertheless refuses the create with
+Two API calls, captured byte-for-byte, for a **journal article that Tel Aviv
+University cannot supply** although it holds the journal title. The request
+bodies are identical; the calls differ only in one query parameter.
+
+```
+Call A  no override parameter        HTTP 400  401604  request refused
+Call B  ?override_blocks=true        HTTP 200          request created
+```
+
+A third call, B′, repeats B and is **left live in SANDBOX** as request
+`43257186260004146`, so the result can be inspected in Alma directly.
+
+Call A is the failure reported on this case:
 
 ```
 HTTP 400
@@ -36,11 +27,13 @@ errorCode    401604
 errorMessage Warning - The institutional inventory has services for the requested title.
 ```
 
-This is the case the Product Manager asked for: *an article that is not
+This is the example the Product Manager asked for: *an article that is not
 included in TAU's inventory, but whose title is.* Section 5 proves both halves
 of that statement from Alma's own API.
 
-No override parameter was sent. This is the endpoint's default behaviour.
+Both calls were made against **SANDBOX**. The production occurrence of
+2026-09-02 used the same identifier and returned the same error; a production
+capture can be supplied if it is needed.
 
 ## 2. Environment and identifiers
 
@@ -48,13 +41,21 @@ No override parameter was sent. This is the endpoint's default behaviour.
 |---|---|
 | Environment | Alma **SANDBOX**, EU region (`api-eu.hosted.exlibrisgroup.com`) |
 | Endpoint | `POST /almaws/v1/users/{user_id}/resource-sharing-requests` |
-| User (proxy patron) | `SHEB` |
+| User (proxy patron) | `SHEB` — calls A and B; `ASAF` for the live call B′ |
 | Resource sharing library (`owner`) | `AM1` |
-| Date/time of capture | **2026-09-14, 09:57:47–48 UTC** |
-| Alma tracking ID (JSON call) | `E01-1409095747-SS4OE-AWAE1612166395` |
-| Alma tracking ID (XML call) | `E01-1409095748-ZYFO9-AWAE1612166395` |
-| `X-Request-ID` (JSON / XML) | `MEyDSySoty` / `6eYNoqQBfF` |
 | Original production occurrence | 2026-09-02, same identifier, same error |
+
+Identifiers for the individual calls, for log retrieval:
+
+| Call | Time (UTC) | Alma tracking ID | `X-Request-ID` |
+|---|---|---|---|
+| A — JSON, no override | 2026-09-14 09:57:47 | `E01-1409095747-SS4OE-AWAE1612166395` | `MEyDSySoty` |
+| A — XML, no override | 2026-09-14 09:57:48 | `E01-1409095748-ZYFO9-AWAE1612166395` | `6eYNoqQBfF` |
+| B — `override_blocks=true` | 2026-09-14 10:16:54 | *(none — HTTP 200)* | `Mm0aPgUstx` |
+| B′ — live request, left in SANDBOX | 2026-09-14 10:19:09 | *(none — HTTP 200)* | `Sa820EdnS9` |
+
+The request created by call B′ is **`43257186260004146`** and has deliberately
+been left in place in SANDBOX so it can be opened and inspected (section 6.3).
 
 The requested article:
 
@@ -67,7 +68,7 @@ The requested article:
 | Published | **2023**, volume **38**, issue **1**, pages 23–28 |
 | e-ISSN as sent | `1555-824X` |
 
-## 3. The request, verbatim
+## 3. Call A — the request, verbatim
 
 ```http
 POST /almaws/v1/users/SHEB/resource-sharing-requests HTTP/1.1
@@ -109,7 +110,7 @@ Body:
 }
 ```
 
-## 4. The response, verbatim
+## 4. Call A — the response, verbatim
 
 **HTTP 400**, returned after **7.675 seconds**.
 
@@ -159,9 +160,8 @@ requested:
 </web_service_result>
 ```
 
-Note the wording is **"Warning"**, but the create is refused with HTTP 400 and
-no request is created. Over the API there is no equivalent of the staff UI's
-**Confirm** button.
+Note the wording is **"Warning"**, but the response is HTTP 400 and no request
+is created.
 
 ## 5. Why this is exactly the requested example
 
@@ -242,72 +242,119 @@ title-level match is real; the service for this citation does not exist.
 Lippincott, while the portfolio TAU holds is Sage — which is why the coverage
 stops where it does.)
 
-### 5.4 How the request reached the API at all
+## 6. Call B — the same request with `override_blocks=true`
 
-Requests are routed to this endpoint by an upstream availability check
-(LibKey) that asks whether **this article** is available to TAU. It answered
-"not available", correctly, and routed the citation to the borrowing path.
-Alma then answers a different question — "does the institution have any
-service for this title?" — and answers "yes", also correctly. Both answers are
-right; they are answers to different questions.
+The identical body was then posted again, adding one query parameter and
+changing nothing else. It was accepted.
 
-## 6. The questions on the case
+### 6.1 The request
 
-Restated, with what our own testing already establishes, so the remaining gaps
-are clear.
+```http
+POST /almaws/v1/users/SHEB/resource-sharing-requests?override_blocks=true HTTP/1.1
+Host: api-eu.hosted.exlibrisgroup.com
+Authorization: apikey <redacted>
+Content-Type: application/json
+Accept: application/json
+Content-Length: 841
+```
 
-**Q1 — Which validation or blocking conditions does the override parameter
-actually bypass?**
-Still open. The parameter is documented as a *patron block* override, but the
-case concerns a *self-ownership* block, and the documentation does not say
-whether one parameter governs both. Please state the full list of conditions
-it suppresses, so we can judge what else we would be switching off.
+The body is byte-for-byte the body in section 3 — same 841 bytes, same user,
+same `owner`, same citation. `override_blocks=true` is the only difference
+between a refused create and an accepted one.
 
-**Q2 — Is the institutional-inventory check title-level only, or are
-additional criteria used?**
-Section 5 shows a match occurring on Title and ISSN with an article three
-volumes outside every coverage statement on the only portfolio that exists.
-That is consistent with the documented "Locate by Fields" set (LCCN, System
-Control Number, Title, ISBN/ISSN), none of which is article-level.
-**Please confirm explicitly: does the Self Ownership check consult electronic
-coverage dates, volumes or issues at any point?** Our evidence says no; we
-would like that confirmed rather than inferred.
+### 6.2 The response
 
-**Q3 — When an end user submits an ILL request through the Primo Resource
-Sharing form, does Primo use this same endpoint, or the same underlying
-request-creation mechanism?**
-Still open, and material: through Primo, self-ownership appears to be
-determined by resolving the incoming OpenURL, which *is* coverage-aware — so
-the same citation may behave differently through Primo than through the API.
-Please confirm whether the two paths share a creation mechanism and whether
-they share this check.
+**HTTP 200**, returned after **11.086 seconds** (`X-Request-ID: Mm0aPgUstx`,
+2026-09-14 10:16:54 GMT). Selected fields of the created request:
 
-## 7. What we are asking for
+```json
+{
+  "request_id": "43257185010004146",
+  "external_id": "972TAU0075707",
+  "status": { "value": "LOCATE_IN_PROCESS", "desc": "Locate in process" },
+  "partner": { "value": "TLL", "desc": "RapidILL" },
+  "owner": "AM1",
+  "format": { "value": "DIGITAL", "desc": "Digital" },
+  "citation_type": { "value": "CR", "desc": "Physical Article" },
+  "pickup_location": { "value": "AM1", "desc": "Life Sciences and Medicine Library" },
+  "journal_title": "American Journal of Medical Quality",
+  "year": "2023",
+  "volume": "38",
+  "issue": "1",
+  "issn": "1062-8606",
+  "created_date": "2026-09-14Z"
+}
+```
 
-1. Confirmation that `401604` firing here is expected behaviour given the
-   configuration — or, if it is not, what in our configuration causes it. The
-   Product Manager's view that "this error is not supposed to occur" does not
-   match section 5; we would like that reconciled.
-2. Direct answers to Q1–Q3 above.
-3. Whether the Self Ownership check can be made **coverage-aware**, or the API
-   given the staff UI's **Confirm** semantics, so that an article outside
-   coverage is not blocked by the presence of the journal title.
+Two details of the stored request are worth recording.
 
-Any of the tracking IDs in section 2 will locate these exact calls in your
-logs.
+Alma assigned partner `TLL` (RapidILL) and status *Locate in process* on
+create.
+
+The stored `issn` is **`1062-8606`**, not the `1555-824X` that was sent — the
+print ISSN of bib `9932873215504146`, the record in section 5.1. Alma's
+augmentation resolved the citation to that same bib.
+
+### 6.3 A live request in SANDBOX, for your inspection
+
+So that this can be examined in Alma directly rather than only on paper, the
+same body was posted once more — again with `override_blocks=true`, changing
+nothing but the proxy patron — and **left in place**:
+
+| | |
+|---|---|
+| Request ID | **`43257186260004146`** |
+| Requesting user | `ASAF` |
+| Resource sharing library | `AM1` |
+| Alma external ID | `972TAU0075708` |
+| Created | 2026-09-14 10:19:09 UTC (`X-Request-ID: Sa820EdnS9`) |
+| Status **on read-back, ~2 seconds later** | `READY_TO_SEND` — "Ready to be sent" |
+| Partner | `TLL` — RapidILL |
+
+The status was read back about two seconds after the create, with no staff
+action in between.
+
+The request from section 6.2 (`43257185010004146`, user `SHEB`) was cancelled
+and will show in SANDBOX as *Cancelled by staff*; it is retained as the A/B
+twin of Call A.
+
+B′ runs under a different patron because an identical create under `SHEB`
+after that cancellation was refused with `402362` "Patron has duplicate
+request" (tracking ID `E01-1409101906-JRTJG-AWAE673038864`).
+
+## 7. Our questions
+
+These are the questions from the original case, unchanged. Sections 1–6 are
+the data they were asked for.
+
+1. **Which validation or blocking conditions does the override parameter
+   actually bypass?**
+
+2. **Is the institutional-inventory check based only on a title match, or are
+   additional matching criteria used?**
+
+3. **When a user submits an ILL request through the Primo Resource Sharing
+   form, is the request creation performed through this same API endpoint?**
+
+Any tracking ID or `X-Request-ID` in section 2 will locate these calls in your
+logs, and request `43257186260004146` is live in our SANDBOX for inspection.
 
 ---
 
 ## Appendix — how this capture was produced
 
-The request body was built by the production code path
+The request body was built once, by the production code path
 (`rs_requests/borrowing.py` → `almaapitk.build_user_rs_request` →
-`Users.create_user_rs_request`), with the pipeline's automatic
-self-ownership retry switched off (`borrowing.override_self_ownership:
-false`) so that the first attempt is the only attempt. The HTTP session was
-instrumented to record the prepared request and the raw response; the API key
-is the only value redacted. Nothing was created in Alma — the create was
-rejected — so there is nothing to clean up.
+`Users.create_user_rs_request`), and then reused **unchanged** for every call
+in this report. Calls A, B and B′ therefore differ only in the query string
+and, for B′, the patron in the path. The HTTP session was instrumented to
+record the prepared request and the raw response; the API key is the only
+value redacted anywhere in this document.
 
-Capture script and raw JSON are held outside this repository (job scratch,
-not committed) and can be reproduced on demand.
+Call A created nothing — it was refused. Call B created request
+`43257185010004146`, which was then cancelled. Call B′ created request
+`43257186260004146`, which is **live in SANDBOX** and awaiting your
+inspection.
+
+The capture scripts and the raw JSON are retained and can be supplied, or the
+whole sequence reproduced, on request.
