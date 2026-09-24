@@ -32,7 +32,10 @@
     "override_self_ownership": true,
     "lcc_number_template": "",
     "columns": {"requestor": 0, "identifier": 1, "notes": 2, "order_number": 3},
-    "allowed_hospitals": ["ASAF", "BEIL", "IC", "LE", "ME", "SHEB", "SHH", "WOLF"]
+    "allowed_hospitals": ["ASAF", "ASSUTA", "BEIL", "BR", "BRZ", "BZ", "CARM",
+                          "CHSL", "EMEQ", "IC", "KAPL", "LAN", "LE", "MACABY",
+                          "ME", "MHMC", "MHS", "NH", "PH", "PORIYA", "RZ",
+                          "SHEB", "SHH", "SZ", "WOLF", "YAFE"]
   },
   "notes": [
     "environment: SANDBOX or PRODUCTION",
