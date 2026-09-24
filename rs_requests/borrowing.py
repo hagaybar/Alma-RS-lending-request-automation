@@ -114,7 +114,13 @@ class BorrowingRequestBuilder(RequestBuilder):
             if value:
                 extra[key] = value
 
-        note = (form_data.get("notes") or "").strip()
+        # The order number leads `note` (the UI's "Request Note") — the only
+        # place Alma shows it: external_id is discarded (GH #14) and
+        # lcc_number is opt-in. The requester's own note follows it.
+        note = " | ".join(part for part in (
+            f"Order: {order_number}" if order_number else "",
+            (form_data.get("notes") or "").strip(),
+        ) if part)
         if note:
             extra["note"] = note
 

@@ -282,7 +282,18 @@ def test_the_stamp_does_not_leak_into_the_first_attempt():
     users = _FakeUsersSeq(_self_ownership_error(), {"request_id": "1"})
     _builder_with(users).submit(_build(form={"notes": "urgent please"}))
 
-    assert users.calls[0][0].get("note") == "urgent please"
+    assert users.calls[0][0].get("note") == "Order: Order_9 | urgent please"
+
+
+def test_order_number_leads_the_note():
+    """Request Note is the only place Alma shows the order number."""
+    assert _build(form={"notes": "urgent"}).payload["note"] == "Order: Order_9 | urgent"
+    assert _build().payload["note"] == "Order: Order_9"
+
+
+def test_no_order_number_leaves_the_note_as_the_requester_wrote_it():
+    assert _build(form={"order_number": "", "notes": "urgent"}).payload["note"] == "urgent"
+    assert "note" not in _build(form={"order_number": ""}).payload
 
 
 def test_the_result_records_that_the_override_was_used():
