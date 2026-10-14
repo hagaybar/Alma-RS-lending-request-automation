@@ -19,6 +19,9 @@ class BuiltRequest:
     external_id: str
     payload: Dict[str, Any]
     summary: Dict[str, str] = field(default_factory=dict)
+    #: Note marker almaapitk uses to find the request if the create's
+    #: outcome is unknown (AlmaAPITK #196). ``None``: none to pass.
+    reconcile_marker: Optional[str] = None
 
 
 class RequestBuilder(ABC):

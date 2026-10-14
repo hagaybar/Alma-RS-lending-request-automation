@@ -346,3 +346,53 @@ def test_the_override_is_not_applied_twice():
     with pytest.raises(AlmaAPIError):
         _builder_with(users).submit(_build())
     assert users.creates == 2
+
+
+# --- submit(): reconcile by order-number marker (AlmaAPITK #196) -------------
+#
+# Alma replaces the POSTed external_id, so a create that times out after
+# saving cannot be found by it. almaapitk >= 0.6.0 can instead find it by a
+# marker in `note` (the linked hold's comment). The order number is stable
+# across runs, so the next run's 402362 also resolves to the real request.
+
+def test_create_reconciles_by_a_bracketed_order_marker():
+    users = _FakeUsersSeq({"request_id": "1"})
+    _builder_with(users).submit(_build())
+
+    kw = users.calls[0][1]
+    assert kw["reconcile"] is True
+    assert kw["reconcile_marker"] == "[ORD-Order_9]"
+
+
+def test_order_marker_is_not_a_prefix_of_a_longer_order_number():
+    # "Order: 12" is inside "Order: 123"; the brackets prevent that match.
+    short = _build(form={"order_number": "12"}).reconcile_marker
+    long_ = _build(form={"order_number": "123"}).reconcile_marker
+    assert short not in long_
+
+
+def test_without_an_order_number_the_toolkit_generates_the_marker():
+    users = _FakeUsersSeq({"request_id": "1"})
+    _builder_with(users).submit(_build(form={"order_number": ""}))
+
+    kw = users.calls[0][1]
+    assert kw["reconcile"] is True
+    assert kw.get("reconcile_marker") is None
+
+
+def test_the_override_retry_keeps_the_same_marker():
+    users = _FakeUsersSeq(_self_ownership_error(), {"request_id": "1"})
+    _builder_with(users).submit(_build())
+
+    assert [kw["reconcile_marker"] for _, kw in users.calls] == ["[ORD-Order_9]"] * 2
+
+
+def test_unreconciled_toolkit_timeout_reraises_for_the_next_run():
+    """almaapitk >= 0.6.0 raises AlmaTimeoutError (an AlmaAPIError). When
+    reconcile cannot find the request, it must still propagate: the file stays
+    in input and the next run's 402362 + marker lookup finishes the job."""
+    from almaapitk import AlmaTimeoutError
+    users = _FakeUsers(exc=AlmaTimeoutError("timed out", request_sent=True))
+    with pytest.raises(AlmaTimeoutError):
+        _builder_with(users).submit(_build())
+    assert users.creates == 1
