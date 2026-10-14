@@ -853,5 +853,29 @@ in the UI, but the APIs cannot. That sits uneasily with `override_blocks`
 existing on this endpoint, and with the vendor's "all blocks" answer. It
 names no API or parameter, so it does not settle which blocks the flag clears.
 
-`OPEN`: whether the follow-up is sent, the vendor's reply, and whether
-`rs_uresolver_locate` affects Self Ownership.
+**SANDBOX probe, 2026-10-14 — `NOT RUN TO COMPLETION`.** Read-only reads of
+the `CustomerParameters` mapping table show the same values in SANDBOX and
+PRODUCTION:
+
+| Parameter | Value | Alma's description |
+|---|---|---|
+| `rs_uresolver_locate` | `false` | "Use U-Resolver for E-Locate (Alma profiles)" |
+| `check_self_ownership_serial` | `true` (set 2022-09-03) | "Should self ownership be checked for serial titles" |
+
+- **Control:** the §10.9 payload, no override, under a fresh proxy user
+  (`KAPL`, to avoid the `402362` duplicate on `BEIL`), was refused `401604`
+  (tracking `E01-1410145535-5QWDG-AWAE2080622434`). Nothing was created.
+- **Flip refused by the API:** `PUT /conf/mapping-tables/CustomerParameters`
+  answers `90125` "Given mapping-table is not customizable". The parameter can
+  only be changed in the UI, *Configuration > Fulfillment > General > Other
+  Settings*.
+- **Stopped by operator decision.** Its effect on daily resource-sharing work
+  is unknown, so it is not being switched on, not even in SANDBOX. Its
+  description ("Alma profiles") suggests it governs locating at partners,
+  not the Self Ownership check, but that is untested.
+
+`check_self_ownership_serial` is a blunter lever. Set to `false`, it would
+stop the check for every serial, in the UI and Primo as well as the API. It
+was not tested either.
+
+`OPEN`: whether the follow-up is sent, and the vendor's reply.
