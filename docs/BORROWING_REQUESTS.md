@@ -738,10 +738,120 @@ The Product Manager's position as relayed on 2026-09-14 — that "this error is
 not supposed to occur" — is contradicted by §5 of the report, and reconciling
 that is what the capture was sent to do.
 
-`OPEN`: the vendor's answers.
+`ANSWERED` (questions 1 and 3) and `ANSWERED, FOLLOW-UP DRAFTED` (question 2): see §10.10.
 
 **Do not cancel `43257186940004146`** (test matrix §4) — it is the one request
 the document names, and Ex Libris may open it at any time. `43257186260004146`
 (`ASAF`) also stays: the operator ruled on 2026-09-14 that SANDBOX leftovers
 from this case are not worth cleaning up. Both are exceptions to test matrix
 rule 6, which otherwise still stands.
+
+### 10.10 The vendor's answers — received by 2026-10-14
+
+Ex Libris support answered in two comments on the case. The earlier one
+answered questions 1 and 3; the later one, after a consultation with the
+Product Manager, answered question 2.
+
+**1. What `override_blocks` bypasses — all blocks.** *"The override parameter
+is designed to override all blocks."* This confirms the risk §10.8 was built
+around: the same flag that clears `401604` also clears genuine patron blocks.
+The pipeline already contains that risk by sending the override **only on
+the one retry after a `401604`** (§10.5). Nothing changes in code.
+
+**2. What the Self Ownership check matches on — configurable, not title
+only.** Paraphrased from the vendor:
+
+- Alma locates the record with the **Locate by Fields** configured for the
+  resource-sharing library. If none are selected, it falls back, in order, to
+  **LCCN, System Control Number, Title, ISBN/ISSN**.
+- With Locate by Fields configured, **Locate only if all fields match** decides
+  how strict it is. *Yes*: every selected field present in the request must
+  match the bib. *No*: a match on any selected identifier field may be enough;
+  if the request carries no identifiers, all other selected fields must match.
+- When identifiers are missing, Alma may fall back to the title alone, which
+  can produce a false match.
+- They pointed to *Locating Items for Resource Sharing*, section *Self
+  Ownership*, the same page §10.1 quotes.
+
+This refines §10.1 and does not overturn it. In our case the match was not a
+weak title-only match: the request carried ISSN `1555-824X`, which is the
+bib's `022 $a` (§10.9). The match on the journal is correct. The vendor's
+answer **does not mention coverage dates at all**, so §10.2 (coverage is not
+consulted) still stands as our own finding, not yet confirmed or denied by
+Ex Libris. Every criterion they list is a field of the bib record. None
+carries the article's year or volume.
+
+Not checked: which Locate by Fields, and which *all fields match* value, TAU's
+resource-sharing library is configured with. That changes how the journal is
+matched, not whether coverage is considered.
+
+**3. Does Primo VE use this API? — No.** A request submitted in Primo VE is
+created inside Alma through its built-in fulfillment and resource-sharing
+services, not through the REST API. Whatever happens to it is decided by
+Alma's configuration and workflow. So the Primo form is not a model for what
+the API should do, and its behaviour on the same article is still unknown.
+
+**Follow-up — drafted 2026-10-14, `NOT YET SENT`** (the operators are
+reviewing it). It replaces an earlier, longer draft. It asks Ex Libris to
+confirm our understanding in three points:
+
+1. `401604` comes from the Self Ownership inventory check. Using the matching
+   criteria they described, Alma found our record for the journal (in the
+   example, by ISSN `1555-824X`) and blocked the request.
+2. Our access does not cover the article: the only portfolio ends in 2020
+   (v.35), the article is 2023 (v.38). Since Alma blocked it anyway, the check
+   does not consider coverage dates, only whether a matching record exists.
+3. `override_blocks` overrides all blocks, and clears the Self Ownership block.
+
+It then asks which **other** blocks `override_blocks` clears on a borrowing
+create. The operators doubt patron blocks apply, because every requester here
+is an institution's proxy account. Those accounts are still Alma users,
+though, so request limits, an expired record or a manual block could still
+apply (test matrix, GH #32 note).
+
+### 10.11 Public sources found 2026-10-14 — `NOT FOR THE CASE`
+
+A web search of the Ex Libris documentation and the Ex Libris Ideas forum,
+for this repo's record only. By operator decision, **none of this is sent to
+Ex Libris**.
+
+**No published list of what `override_blocks` clears.** The users swagger
+(`AlmaAPITK/docs/alma-swagger/users.json`) describes it only as *"Indication
+whether the request should be created even if blocks exist."* Of the ten
+`400` codes it lists for `POST .../resource-sharing-requests`, only `401604`
+is a warning. The rest are hard errors (unknown user, missing owner library,
+duplicate request, …), which the override is not expected to clear.
+
+**Other institutions report the same coverage gap.**
+
+- [*Resource Sharing API should consider coverage of local inventory*](https://ideas.exlibrisgroup.com/forums/308173-alma/suggestions/48456164-resource-sharing-api-should-consider-coverage-of-l)
+  (Ideas, 2024-05-21). It describes our case exactly: the API ignores coverage,
+  so owned titles are rejected unless the override is set, including embargoed
+  or out-of-coverage articles. No Ex Libris response, no status.
+- [*Resource Sharing Electronic Locate for Borrowing article requests*](https://ideas.exlibrisgroup.com/forums/308173-alma/suggestions/40424683-resource-sharing-electronic-locate-for-borrowing-a)
+  (Ideas, 2020-05-14). The UI-side version: the borrowing locate's local
+  ownership check does not check year, volume, issue or embargo. No Ex Libris
+  response, no status.
+
+Together they independently support §10.2: coverage is not consulted.
+
+**A possible lever: the customer parameter `rs_uresolver_locate`.** According
+to *Locating Items for Resource Sharing*, when it is true, *"electronic
+resources are located based on OpenURL-like link resolving, which mandates an
+ISSN"*. Secondary sources (the 2020 idea above, and the Scholars Portal AFN
+guide *Optimizing digital requesting rota*) describe it as making the locate
+coverage-aware, set under *Fulfillment > General > Other Settings*. Both
+describe it for **lenders' coverage**. Whether it also makes **our own** Self
+Ownership check coverage-aware is `UNVERIFIED`. If it does, it would remove
+the need for the override. Testing it in SANDBOX is the cheap way to find out.
+TAU's current value has not been checked.
+
+**Staff can override blocks in the UI, not through the API.**
+[*Allow loans/requests APIs to override blocks and limits*](https://ideas.exlibrisgroup.com/forums/308173-alma/suggestions/49180181-allow-loans-requests-apis-to-override-blocks-and-l)
+(Ideas, 2024-12-05) says staff can override user blocks and loan/request limits
+in the UI, but the APIs cannot. That sits uneasily with `override_blocks`
+existing on this endpoint, and with the vendor's "all blocks" answer. It
+names no API or parameter, so it does not settle which blocks the flag clears.
+
+`OPEN`: whether the follow-up is sent, the vendor's reply, and whether
+`rs_uresolver_locate` affects Self Ownership.
