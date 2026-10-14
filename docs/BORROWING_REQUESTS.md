@@ -738,10 +738,72 @@ The Product Manager's position as relayed on 2026-09-14 — that "this error is
 not supposed to occur" — is contradicted by §5 of the report, and reconciling
 that is what the capture was sent to do.
 
-`OPEN`: the vendor's answers.
+`ANSWERED` (questions 1 and 3) and `ANSWERED, FOLLOW-UP DRAFTED` (question 2): see §10.10.
 
 **Do not cancel `43257186940004146`** (test matrix §4) — it is the one request
 the document names, and Ex Libris may open it at any time. `43257186260004146`
 (`ASAF`) also stays: the operator ruled on 2026-09-14 that SANDBOX leftovers
 from this case are not worth cleaning up. Both are exceptions to test matrix
 rule 6, which otherwise still stands.
+
+### 10.10 The vendor's answers — received by 2026-10-14
+
+Ex Libris support answered in two comments on the case. The earlier one
+answered questions 1 and 3; the later one, after a consultation with the
+Product Manager, answered question 2.
+
+**1. What `override_blocks` bypasses — all blocks.** *"The override parameter
+is designed to override all blocks."* This confirms the risk §10.8 was built
+around: the same flag that clears `401604` also clears genuine patron blocks.
+The pipeline already contains that risk by sending the override **only on
+the one retry after a `401604`** (§10.5). Nothing changes in code.
+
+**2. What the Self Ownership check matches on — configurable, not title
+only.** Paraphrased from the vendor:
+
+- Alma locates the record with the **Locate by Fields** configured for the
+  resource-sharing library. If none are selected, it falls back, in order, to
+  **LCCN, System Control Number, Title, ISBN/ISSN**.
+- With Locate by Fields configured, **Locate only if all fields match** decides
+  how strict it is. *Yes*: every selected field present in the request must
+  match the bib. *No*: a match on any selected identifier field may be enough;
+  if the request carries no identifiers, all other selected fields must match.
+- When identifiers are missing, Alma may fall back to the title alone, which
+  can produce a false match.
+- They pointed to *Locating Items for Resource Sharing*, section *Self
+  Ownership*, the same page §10.1 quotes.
+
+This refines §10.1 and does not overturn it. In our case the match was not a
+weak title-only match: the request carried ISSN `1555-824X`, which is the
+bib's `022 $a` (§10.9). The match on the journal is correct. The vendor's
+answer **does not mention coverage dates at all**, so §10.2 (coverage is not
+consulted) still stands as our own finding, not yet confirmed or denied by
+Ex Libris. Every criterion they list is a field of the bib record. None
+carries the article's year or volume.
+
+Not checked: which Locate by Fields, and which *all fields match* value, TAU's
+resource-sharing library is configured with. That changes how the journal is
+matched, not whether coverage is considered.
+
+**3. Does Primo VE use this API? — No.** A request submitted in Primo VE is
+created inside Alma through its built-in fulfillment and resource-sharing
+services, not through the REST API. Whatever happens to it is decided by
+Alma's configuration and workflow. So the Primo form is not a model for what
+the API should do, and its behaviour on the same article is still unknown.
+
+**Follow-up — drafted 2026-10-14, `NOT YET SENT`** (the operators are
+reviewing it). It asks:
+
+1. Does the Self Ownership check ever consider portfolio coverage dates, or
+   the year and volume of the requested article?
+2. If not, can any setting (Locate by Fields or another) make the check
+   coverage-aware for article requests?
+3. Since the override clears all blocks, is there an API equivalent of the
+   UI's **Confirm** that clears only the self-ownership warning?
+4. When a patron submits the same request in Primo VE, does the Self Ownership
+   check run there too, and is it a block or only a warning?
+
+Questions 1–2 are the coverage question §10.9 held back; question 3 is new.
+A *yes* to question 2 or 3 would remove the need for the blanket override.
+
+`OPEN`: whether the follow-up is sent, and the vendor's reply.
