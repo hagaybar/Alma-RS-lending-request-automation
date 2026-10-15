@@ -183,10 +183,12 @@ class BorrowingRequestBuilder(RequestBuilder):
             summary={"detected_type": form_data.get("identifier_type", ""),
                      "title": title, "requestor": hospital,
                      "citation_type": citation_type},
-            # Bracketed so "[ORD-12]" can never match inside "[ORD-123]".
-            # The order number is stable across runs, so a later run's
-            # 402362 resolves to the real request too (AlmaAPITK #196).
-            reconcile_marker=f"[ORD-{order_number}]" if order_number else None,
+            # The local file ID: unique among pending files and stable across
+            # retries of the same file (GH #13), so a later run's 402362
+            # resolves to the real request too (AlmaAPITK #196). Not the order
+            # number: forms don't guarantee it is unique. Bracketed so
+            # "[...-12]" can never match inside "[...-123]".
+            reconcile_marker=f"[{external_id}]",
         )
 
     def submit(self, built: BuiltRequest) -> Dict[str, Any]:
@@ -205,8 +207,9 @@ class BorrowingRequestBuilder(RequestBuilder):
                 # raises AlmaValidationError naming the field BEFORE any HTTP.
                 # reconcile=True (almaapitk >= 0.6.0): if the create's
                 # outcome is unknown (read timeout, or 402362 from an
-                # earlier run), the toolkit finds the request by the note
-                # marker and returns it, real request_id included.
+                # earlier run), the toolkit finds the request by the
+                # file-ID marker in the note and returns it, real
+                # request_id included.
                 response = users.create_user_rs_request(
                     hospital, payload, validate=True, reconcile=True,
                     **({"reconcile_marker": built.reconcile_marker}
@@ -271,7 +274,7 @@ class BorrowingRequestBuilder(RequestBuilder):
         # requests.RequestException and is not caught. Either way the file
         # stays in input, the next scheduled run re-POSTs, and if this create
         # actually saved, Alma answers 402362: the toolkit then finds it by the
-        # order marker, or the duplicate branch above finishes the job.
+        # file-ID marker, or the duplicate branch above finishes the job.
         data = response.data or {}
         self.processor.logger.info("✓ Borrowing request created")
         self.processor.logger.info(f"  Request ID: {data.get('request_id')}")

@@ -348,43 +348,53 @@ def test_the_override_is_not_applied_twice():
     assert users.creates == 2
 
 
-# --- submit(): reconcile by order-number marker (AlmaAPITK #196) -------------
+# --- submit(): reconcile by file-ID marker (AlmaAPITK #196) -----------------
 #
 # Alma replaces the POSTed external_id, so a create that times out after
 # saving cannot be found by it. almaapitk >= 0.6.0 can instead find it by a
-# marker in `note` (the linked hold's comment). The order number is stable
-# across runs, so the next run's 402362 also resolves to the real request.
+# marker in `note` (the linked hold's comment). The marker is our local
+# FORMS-BR-... file ID: unique among pending files and stable across retries
+# of the same file (GH #13), so a later run's 402362 resolves to the real
+# request too. Order numbers come from the forms and are not guaranteed
+# unique, so they are not used.
 
-def test_create_reconciles_by_a_bracketed_order_marker():
+def test_create_reconciles_by_the_bracketed_file_id():
+    built = _build()
     users = _FakeUsersSeq({"request_id": "1"})
-    _builder_with(users).submit(_build())
+    _builder_with(users).submit(built)
 
     kw = users.calls[0][1]
     assert kw["reconcile"] is True
-    assert kw["reconcile_marker"] == "[ORD-Order_9]"
+    assert kw["reconcile_marker"] == f"[{built.external_id}]"
 
 
-def test_order_marker_is_not_a_prefix_of_a_longer_order_number():
-    # "Order: 12" is inside "Order: 123"; the brackets prevent that match.
+def test_marker_is_the_same_for_a_retry_of_the_same_file():
+    assert _build().reconcile_marker == _build().reconcile_marker
+
+
+def test_marker_differs_between_files_with_the_same_order_number():
+    a = _build(form={"filename": "form_a"}).reconcile_marker
+    b = _build(form={"filename": "form_b"}).reconcile_marker
+    assert a != b
+
+
+def test_marker_is_not_a_prefix_of_a_longer_file_id():
+    # Brackets: "[...-12]" can never match inside "[...-123]".
     short = _build(form={"order_number": "12"}).reconcile_marker
     long_ = _build(form={"order_number": "123"}).reconcile_marker
     assert short not in long_
 
 
-def test_without_an_order_number_the_toolkit_generates_the_marker():
-    users = _FakeUsersSeq({"request_id": "1"})
-    _builder_with(users).submit(_build(form={"order_number": ""}))
-
-    kw = users.calls[0][1]
-    assert kw["reconcile"] is True
-    assert kw.get("reconcile_marker") is None
+def test_a_form_without_an_order_number_still_gets_a_marker():
+    assert _build(form={"order_number": ""}).reconcile_marker.startswith("[FORMS-BR-")
 
 
 def test_the_override_retry_keeps_the_same_marker():
+    built = _build()
     users = _FakeUsersSeq(_self_ownership_error(), {"request_id": "1"})
-    _builder_with(users).submit(_build())
+    _builder_with(users).submit(built)
 
-    assert [kw["reconcile_marker"] for _, kw in users.calls] == ["[ORD-Order_9]"] * 2
+    assert [kw["reconcile_marker"] for _, kw in users.calls] == [f"[{built.external_id}]"] * 2
 
 
 def test_unreconciled_toolkit_timeout_reraises_for_the_next_run():

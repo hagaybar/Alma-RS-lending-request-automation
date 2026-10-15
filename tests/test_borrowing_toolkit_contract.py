@@ -29,7 +29,7 @@ def test_create_user_rs_request_has_the_validate_preflight():
 
 
 def test_create_user_rs_request_can_reconcile_by_note_marker():
-    """submit() passes reconcile=True + the order marker (AlmaAPITK #196,
+    """submit() passes reconcile=True + the file-ID marker (AlmaAPITK #196,
     almaapitk >= 0.6.0). The marker is how a timed-out create is found."""
     sig = inspect.signature(Users.create_user_rs_request)
     assert sig.parameters["reconcile"].default is False

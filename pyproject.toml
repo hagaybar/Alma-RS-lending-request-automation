@@ -24,7 +24,7 @@ python = "^3.12"
 # (401930). Hit in production 2026-09-02; AlmaAPITK #214.
 # Raised to >=0.6.0: create_user_rs_request(reconcile=, reconcile_marker=) is
 # absent below this. borrowing submit() passes both, so a create that times
-# out after saving is found by its order marker instead of reported blind
+# out after saving is found by its file-ID marker instead of reported blind
 # (AlmaAPITK #196).
 almaapitk = ">=0.6.0"
 

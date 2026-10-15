@@ -328,7 +328,7 @@ file as `duplicate` (success-like) and moves it to `processed/`.
   endpoint for user RS requests (§5); enumeration goes through
   `/users/{id}/requests` and its nested `resource_sharing` block.
 
-### 8.4 Reconcile by order marker (2026-10-14, AlmaAPITK #196)
+### 8.4 Reconcile by file-ID marker (2026-10-15, AlmaAPITK #196)
 
 The list-based reconcile anticipated above now exists in almaapitk >= 0.6.0,
 and `submit()` uses it.
@@ -337,21 +337,24 @@ and `submit()` uses it.
   hold in `GET /users/{id}/requests`. The hold's `comment` is the request
   `note` verbatim, and its `resource_sharing.id` is the borrowing request id.
 - `submit()` calls `create_user_rs_request(..., reconcile=True,
-  reconcile_marker="[ORD-<order_number>]")`. The toolkit appends the marker
-  to `note`, after the existing `Order: … | notes` text. The brackets stop
-  `[ORD-12]` from matching inside `[ORD-123]`.
+  reconcile_marker="[<local FORMS-BR-… id>]")`. The toolkit appends the
+  marker to `note`, after the existing `Order: … | notes` text, so the
+  Request Note reads e.g.
+  `Order: 123 | please send by email [FORMS-BR-<hospital>-<file time>-<file name>-123]`.
+- **Why the file ID, not the order number:** order numbers come from the
+  forms and are not guaranteed unique. A reused one could match an older
+  request and report the wrong id. The file ID is unique among pending
+  files and stays the same when that file is retried (§4.5, GH #13). The
+  brackets stop `[…-12]` from matching inside `[…-123]`.
 - **On a read timeout** the toolkit searches for the marker (up to 3 times,
   10 s apart) and returns the created request: the file finishes as
   `success` with its real `request_id`, in the same run.
-- **On a later run's `402362`** the same order marker finds the earlier
-  request, so the file also finishes as `success` with the real id. The
-  `duplicate` outcome (no id) now remains only when no marker matches, e.g.
-  a form with no order number, or an identical request made outside this
-  pipeline.
+- **On a later run's `402362`** the same file ID finds the earlier request,
+  so the file also finishes as `success` with the real id. The `duplicate`
+  outcome (no id) now remains only when no marker matches, e.g. an
+  identical request made outside this pipeline.
 - `VERIFIED` SANDBOX 2026-10-14: Alma's `402362` check ignores `note`, so the
   marker does not weaken §8.2. A forced 1 s timeout was reconciled end to end.
-- With no order number, the toolkit generates a per-call marker. That covers
-  the same-run timeout only.
 
 ## 9. Upstream evidence — 2026-07-22 (AlmaAPITK `rs-borrowing-ergonomics`)
 
