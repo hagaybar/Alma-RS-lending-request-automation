@@ -22,12 +22,23 @@ def test_create_user_rs_request_has_the_validate_preflight():
     sig = inspect.signature(Users.create_user_rs_request)
     assert list(sig.parameters) == [
         "self", "user_id", "request_data", "user_id_type", "override_blocks",
-        "validate",
+        "validate", "timeout", "reconcile", "reconcile_marker",
     ]
-    assert sig.parameters["validate"].kind is inspect.Parameter.KEYWORD_ONLY
+    for name in ("validate", "timeout", "reconcile", "reconcile_marker"):
+        assert sig.parameters[name].kind is inspect.Parameter.KEYWORD_ONLY
+
+
+def test_create_user_rs_request_can_reconcile_by_note_marker():
+    """submit() passes reconcile=True + the file-ID marker (AlmaAPITK #196,
+    almaapitk >= 0.6.0). The marker is how a timed-out create is found."""
+    sig = inspect.signature(Users.create_user_rs_request)
+    assert sig.parameters["reconcile"].default is False
+    assert sig.parameters["reconcile_marker"].default is None
+    assert hasattr(Users, "find_user_rs_request_by_marker")
 
 
 def test_get_user_rs_request_exists_for_the_matrix_diff():
     """The SANDBOX harness GETs the created request to diff settability
-    (matrix T-02). NOT used for reconcile — that is impossible (GH #14)."""
+    (matrix T-02). Not for reconcile by external_id: Alma replaces it
+    (GH #14); reconcile goes by note marker instead (AlmaAPITK #196)."""
     assert hasattr(Users, "get_user_rs_request")

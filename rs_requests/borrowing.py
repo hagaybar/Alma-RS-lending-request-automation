@@ -183,6 +183,12 @@ class BorrowingRequestBuilder(RequestBuilder):
             summary={"detected_type": form_data.get("identifier_type", ""),
                      "title": title, "requestor": hospital,
                      "citation_type": citation_type},
+            # The local file ID: unique among pending files and stable across
+            # retries of the same file (GH #13), so a later run's 402362
+            # resolves to the real request too (AlmaAPITK #196). Not the order
+            # number: forms don't guarantee it is unique. Bracketed so
+            # "[...-12]" can never match inside "[...-123]".
+            reconcile_marker=f"[{external_id}]",
         )
 
     def submit(self, built: BuiltRequest) -> Dict[str, Any]:
@@ -199,8 +205,15 @@ class BorrowingRequestBuilder(RequestBuilder):
             try:
                 # validate=True (almaapitk >= 0.5.0): a wrong code-table value
                 # raises AlmaValidationError naming the field BEFORE any HTTP.
+                # reconcile=True (almaapitk >= 0.6.0): if the create's
+                # outcome is unknown (read timeout, or 402362 from an
+                # earlier run), the toolkit finds the request by the
+                # file-ID marker in the note and returns it, real
+                # request_id included.
                 response = users.create_user_rs_request(
-                    hospital, payload, validate=True,
+                    hospital, payload, validate=True, reconcile=True,
+                    **({"reconcile_marker": built.reconcile_marker}
+                       if built.reconcile_marker else {}),
                     **({"override_blocks": True} if override else {}))
             except AlmaValidationError as e:
                 # AlmaValidationError subclasses ValueError, NOT AlmaAPIError,
@@ -255,12 +268,13 @@ class BorrowingRequestBuilder(RequestBuilder):
                     continue
                 raise
             break
-        # requests.RequestException (socket timeout, connection reset) is
-        # deliberately NOT caught: almaapitk does not wrap transport errors
-        # (GH #9; re-verified on the 2026-07-22 main), and re-raising is
-        # correct here — the file stays in
-        # input, the next scheduled run re-POSTs, and if this create actually
-        # saved, Alma answers 402362 and the branch above finishes the job.
+        # A timeout the toolkit could not reconcile arrives as
+        # AlmaTimeoutError (an AlmaAPIError, almaapitk >= 0.6.0) and is
+        # re-raised above; a connection reset arrives as a plain
+        # requests.RequestException and is not caught. Either way the file
+        # stays in input, the next scheduled run re-POSTs, and if this create
+        # actually saved, Alma answers 402362: the toolkit then finds it by the
+        # file-ID marker, or the duplicate branch above finishes the job.
         data = response.data or {}
         self.processor.logger.info("✓ Borrowing request created")
         self.processor.logger.info(f"  Request ID: {data.get('request_id')}")
