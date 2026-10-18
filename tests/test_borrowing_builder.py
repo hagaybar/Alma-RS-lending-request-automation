@@ -348,61 +348,92 @@ def test_the_override_is_not_applied_twice():
     assert users.creates == 2
 
 
-# --- submit(): reconcile by file-ID marker (AlmaAPITK #196) -----------------
+# --- submit(): unconfirmed creates are logged for monitoring ----------------
 #
-# Alma replaces the POSTed external_id, so a create that times out after
-# saving cannot be found by it. almaapitk >= 0.6.0 can instead find it by a
-# marker in `note` (the linked hold's comment). The marker is our local
-# FORMS-BR-... file ID: unique among pending files and stable across retries
-# of the same file (GH #13), so a later run's 402362 resolves to the real
-# request too. Order numbers come from the forms and are not guaranteed
-# unique, so they are not used.
+# DECISION 2026-10-18: no marker in the request itself. A create whose outcome
+# this run cannot confirm is logged under one fixed tag, so staff can grep the
+# log for it: a timeout or connection error (Alma may have saved it), and a
+# 402362 (Alma has an identical request but does not say which).
 
-def test_create_reconciles_by_the_bracketed_file_id():
+class _RecordingLogger:
+    def __init__(self):
+        self.warnings = []
+    def info(self, *a, **k): pass
+    def debug(self, *a, **k): pass
+    def warning(self, msg, *a, **k):
+        self.warnings.append(msg)
+
+
+def _logged_builder(users):
+    builder = _builder_with(users)
+    builder.processor.logger = _RecordingLogger()
+    return builder, builder.processor.logger.warnings
+
+
+def _tagged(warnings):
+    from rs_requests.borrowing import UNCONFIRMED_LOG_TAG
+    return [w for w in warnings if w.startswith(UNCONFIRMED_LOG_TAG)]
+
+
+def test_a_timeout_is_logged_as_unconfirmed_with_the_file_id():
     built = _build()
-    users = _FakeUsersSeq({"request_id": "1"})
-    _builder_with(users).submit(built)
+    builder, warnings = _logged_builder(
+        _FakeUsers(exc=requests.exceptions.ReadTimeout("read timed out")))
+    with pytest.raises(requests.exceptions.ReadTimeout):
+        builder.submit(built)
 
-    kw = users.calls[0][1]
-    assert kw["reconcile"] is True
-    assert kw["reconcile_marker"] == f"[{built.external_id}]"
-
-
-def test_marker_is_the_same_for_a_retry_of_the_same_file():
-    assert _build().reconcile_marker == _build().reconcile_marker
-
-
-def test_marker_differs_between_files_with_the_same_order_number():
-    a = _build(form={"filename": "form_a"}).reconcile_marker
-    b = _build(form={"filename": "form_b"}).reconcile_marker
-    assert a != b
+    [line] = _tagged(warnings)
+    assert "reason=timeout" in line
+    assert f"file={built.external_id}" in line
+    assert "requestor=SHEB" in line
 
 
-def test_marker_is_not_a_prefix_of_a_longer_file_id():
-    # Brackets: "[...-12]" can never match inside "[...-123]".
-    short = _build(form={"order_number": "12"}).reconcile_marker
-    long_ = _build(form={"order_number": "123"}).reconcile_marker
-    assert short not in long_
+def test_a_connection_error_is_logged_as_unconfirmed():
+    builder, warnings = _logged_builder(
+        _FakeUsers(exc=requests.exceptions.ConnectionError("reset")))
+    with pytest.raises(requests.exceptions.ConnectionError):
+        builder.submit(_build())
+    [line] = _tagged(warnings)
+    assert "reason=connection" in line
 
 
-def test_a_form_without_an_order_number_still_gets_a_marker():
-    assert _build(form={"order_number": ""}).reconcile_marker.startswith("[FORMS-BR-")
+def test_a_toolkit_timeout_is_logged_as_unconfirmed():
+    """almaapitk >= 0.6.0 wraps timeouts in AlmaTimeoutError, an AlmaAPIError.
+    It must not fall through to the plain re-raise unlogged."""
+    almaapitk = pytest.importorskip("almaapitk")
+    if not hasattr(almaapitk, "AlmaTimeoutError"):
+        pytest.skip("almaapitk < 0.6.0 raises the raw requests timeout")
+    builder, warnings = _logged_builder(
+        _FakeUsers(exc=almaapitk.AlmaTimeoutError("timed out")))
+    with pytest.raises(almaapitk.AlmaTimeoutError):
+        builder.submit(_build())
+    assert "reason=timeout" in _tagged(warnings)[0]
 
 
-def test_the_override_retry_keeps_the_same_marker():
+def test_a_duplicate_is_logged_as_unconfirmed():
     built = _build()
-    users = _FakeUsersSeq(_self_ownership_error(), {"request_id": "1"})
-    _builder_with(users).submit(built)
+    builder, warnings = _logged_builder(_FakeUsers(exc=_alma_error(
+        "Failed to save the request: Patron has duplicate request", "402362")))
+    assert builder.submit(built)["status"] == "duplicate"
 
-    assert [kw["reconcile_marker"] for _, kw in users.calls] == [f"[{built.external_id}]"] * 2
+    [line] = _tagged(warnings)
+    assert "reason=duplicate-402362" in line
+    assert f"file={built.external_id}" in line
 
 
-def test_unreconciled_toolkit_timeout_reraises_for_the_next_run():
-    """almaapitk >= 0.6.0 raises AlmaTimeoutError (an AlmaAPIError). When
-    reconcile cannot find the request, it must still propagate: the file stays
-    in input and the next run's 402362 + marker lookup finishes the job."""
-    from almaapitk import AlmaTimeoutError
-    users = _FakeUsers(exc=AlmaTimeoutError("timed out", request_sent=True))
-    with pytest.raises(AlmaTimeoutError):
-        _builder_with(users).submit(_build())
-    assert users.creates == 1
+def test_other_api_errors_are_not_tagged():
+    builder, warnings = _logged_builder(_FakeUsers(exc=_alma_error(
+        "Patron is not affiliated with a resource sharing library", "401768")))
+    with pytest.raises(AlmaAPIError):
+        builder.submit(_build())
+    assert _tagged(warnings) == []
+
+
+def test_a_confirmed_create_is_not_tagged():
+    builder, warnings = _logged_builder(_FakeUsersSeq({"request_id": "1"}))
+    builder.submit(_build())
+    assert _tagged(warnings) == []
+
+
+def test_the_note_carries_no_marker():
+    assert "FORMS-BR-" not in _build().payload.get("note", "")

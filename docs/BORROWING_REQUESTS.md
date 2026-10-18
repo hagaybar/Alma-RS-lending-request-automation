@@ -328,33 +328,35 @@ file as `duplicate` (success-like) and moves it to `processed/`.
   endpoint for user RS requests (§5); enumeration goes through
   `/users/{id}/requests` and its nested `resource_sharing` block.
 
-### 8.4 Reconcile by file-ID marker (2026-10-15, AlmaAPITK #196)
+### 8.4 Unconfirmed creates are logged, not marked (DECISION 2026-10-18)
 
-The list-based reconcile anticipated above now exists in almaapitk >= 0.6.0,
-and `submit()` uses it.
+almaapitk 0.6.0 can find a timed-out create by a marker in the Request Note
+(AlmaAPITK #196). Shown to the RS team with before/after SANDBOX examples,
+the decision was **not to put any marker in the request**. Instead, every
+create whose outcome a run cannot confirm is logged under one fixed tag, so
+these cases can be monitored:
 
-- `VERIFIED` SANDBOX 2026-10-14: every borrowing request creates a linked
-  hold in `GET /users/{id}/requests`. The hold's `comment` is the request
-  `note` verbatim, and its `resource_sharing.id` is the borrowing request id.
-- `submit()` calls `create_user_rs_request(..., reconcile=True,
-  reconcile_marker="[<local FORMS-BR-… id>]")`. The toolkit appends the
-  marker to `note`, after the existing `Order: … | notes` text, so the
-  Request Note reads e.g.
-  `Order: 123 | please send by email [FORMS-BR-<hospital>-<file time>-<file name>-123]`.
-- **Why the file ID, not the order number:** order numbers come from the
-  forms and are not guaranteed unique. A reused one could match an older
-  request and report the wrong id. The file ID is unique among pending
-  files and stays the same when that file is retried (§4.5, GH #13). The
-  brackets stop `[…-12]` from matching inside `[…-123]`.
-- **On a read timeout** the toolkit searches for the marker (up to 3 times,
-  10 s apart) and returns the created request: the file finishes as
-  `success` with its real `request_id`, in the same run.
-- **On a later run's `402362`** the same file ID finds the earlier request,
-  so the file also finishes as `success` with the real id. The `duplicate`
-  outcome (no id) now remains only when no marker matches, e.g. an
-  identical request made outside this pipeline.
-- `VERIFIED` SANDBOX 2026-10-14: Alma's `402362` check ignores `note`, so the
-  marker does not weaken §8.2. A forced 1 s timeout was reconciled end to end.
+```
+[BORROWING-UNCONFIRMED] reason=<timeout|connection|duplicate-402362> file=<FORMS-BR-… id> requestor=<proxy user> title='…' error=…
+```
+
+- `timeout` / `connection`: the create raised before Alma answered, so Alma
+  may or may not have saved it. The file stays in input and the next run
+  re-POSTs (unchanged behaviour).
+- `duplicate-402362`: Alma refused an identical request. Usually the earlier
+  attempt did save; the file finishes as `duplicate` with no `request_id`.
+- A `timeout` followed by a `duplicate-402362` for the same `file=` is the
+  usual pair. `file=` is the same file ID the reports show.
+- Monitor with `findstr /C:"[BORROWING-UNCONFIRMED]"` on the processor log
+  (masedet) or `grep -F` elsewhere.
+
+Facts verified while building the marker, still true and still the reason
+`request_id` stays unknowable on a `402362`:
+
+- `VERIFIED` SANDBOX 2026-10-14: Alma replaces the POSTed `external_id`, so a
+  lookup by our id finds nothing (§8.3, GH #14).
+- `VERIFIED` SANDBOX 2026-10-14: the linked hold in `GET /users/{id}/requests`
+  carries the request `note` verbatim, and `402362` ignores `note`.
 
 ## 9. Upstream evidence — 2026-07-22 (AlmaAPITK `rs-borrowing-ergonomics`)
 
