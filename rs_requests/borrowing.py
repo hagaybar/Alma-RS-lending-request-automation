@@ -14,7 +14,13 @@ import logging
 import re
 from typing import Any, Dict, Optional
 
+import requests
 from almaapitk import AlmaAPIError, AlmaValidationError, build_user_rs_request
+
+try:
+    from almaapitk import AlmaTimeoutError
+except ImportError:  # almaapitk < 0.6.0 raises the raw requests timeout
+    AlmaTimeoutError = requests.exceptions.Timeout
 
 from rs_requests.base import BuiltRequest, RequestBuilder
 from rs_requests.errors import BorrowingValidationError
@@ -36,6 +42,14 @@ SELF_OWNERSHIP_STAMP = (
     "requested year is outside coverage, and no article-level access was "
     "found upstream."
 )
+
+#: DECISION 2026-10-18: a create whose outcome this run cannot confirm is
+#: logged under this fixed tag, and nothing is added to the request itself.
+#: Two cases: a timeout or connection error (Alma may have saved the
+#: request), and a 402362 (Alma holds an identical request but does not say
+#: which). Grep the log for the tag to monitor them; the file= value is the
+#: same file ID the reports show.
+UNCONFIRMED_LOG_TAG = "[BORROWING-UNCONFIRMED]"
 
 
 class BorrowingRequestBuilder(RequestBuilder):
@@ -202,6 +216,12 @@ class BorrowingRequestBuilder(RequestBuilder):
                 response = users.create_user_rs_request(
                     hospital, payload, validate=True,
                     **({"override_blocks": True} if override else {}))
+            except (AlmaTimeoutError, requests.exceptions.RequestException) as e:
+                # Before the AlmaAPIError clause: almaapitk >= 0.6.0's
+                # AlmaTimeoutError is an AlmaAPIError. Re-raised either way —
+                # see the comment after the loop.
+                self._log_unconfirmed(built, self._transport_reason(e), e)
+                raise
             except AlmaValidationError as e:
                 # AlmaValidationError subclasses ValueError, NOT AlmaAPIError,
                 # so without this clause it escapes to the processor's generic
@@ -224,6 +244,7 @@ class BorrowingRequestBuilder(RequestBuilder):
                         f"active request already exists for {hospital} — "
                         f"treating as already created."
                     )
+                    self._log_unconfirmed(built, "duplicate-402362", e)
                     return {"status": "duplicate",
                             "request_id": "",   # unknowable — Alma doesn't say which
                             "external_id": built.external_id,
@@ -255,12 +276,11 @@ class BorrowingRequestBuilder(RequestBuilder):
                     continue
                 raise
             break
-        # requests.RequestException (socket timeout, connection reset) is
-        # deliberately NOT caught: almaapitk does not wrap transport errors
-        # (GH #9; re-verified on the 2026-07-22 main), and re-raising is
-        # correct here — the file stays in
-        # input, the next scheduled run re-POSTs, and if this create actually
-        # saved, Alma answers 402362 and the branch above finishes the job.
+        # A timeout or connection error is logged and re-raised, never
+        # swallowed: the file stays in input, the next scheduled run re-POSTs,
+        # and if this create actually saved, Alma answers 402362 and the
+        # duplicate branch above finishes the job. Both steps carry
+        # UNCONFIRMED_LOG_TAG, so the pair can be read together in the log.
         data = response.data or {}
         self.processor.logger.info("✓ Borrowing request created")
         self.processor.logger.info(f"  Request ID: {data.get('request_id')}")
@@ -270,6 +290,21 @@ class BorrowingRequestBuilder(RequestBuilder):
         return {"status": "success", "request_id": data.get("request_id"),
                 "external_id": built.external_id,
                 "self_ownership_override": override, **built.summary}
+
+    def _log_unconfirmed(self, built: BuiltRequest, reason: str,
+                         error: Exception) -> None:
+        """One greppable line for a create this run could not confirm."""
+        self.processor.logger.warning(
+            f"{UNCONFIRMED_LOG_TAG} reason={reason} file={built.external_id} "
+            f"requestor={built.summary['requestor']} "
+            f"title={built.summary['title']!r} error={error}"
+        )
+
+    @staticmethod
+    def _transport_reason(error: Exception) -> str:
+        if isinstance(error, (AlmaTimeoutError, requests.exceptions.Timeout)):
+            return "timeout"
+        return "connection"
 
     @staticmethod
     def _stamp_override(payload: Dict[str, Any]) -> Dict[str, Any]:

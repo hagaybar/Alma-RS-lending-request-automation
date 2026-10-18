@@ -346,3 +346,94 @@ def test_the_override_is_not_applied_twice():
     with pytest.raises(AlmaAPIError):
         _builder_with(users).submit(_build())
     assert users.creates == 2
+
+
+# --- submit(): unconfirmed creates are logged for monitoring ----------------
+#
+# DECISION 2026-10-18: no marker in the request itself. A create whose outcome
+# this run cannot confirm is logged under one fixed tag, so staff can grep the
+# log for it: a timeout or connection error (Alma may have saved it), and a
+# 402362 (Alma has an identical request but does not say which).
+
+class _RecordingLogger:
+    def __init__(self):
+        self.warnings = []
+    def info(self, *a, **k): pass
+    def debug(self, *a, **k): pass
+    def warning(self, msg, *a, **k):
+        self.warnings.append(msg)
+
+
+def _logged_builder(users):
+    builder = _builder_with(users)
+    builder.processor.logger = _RecordingLogger()
+    return builder, builder.processor.logger.warnings
+
+
+def _tagged(warnings):
+    from rs_requests.borrowing import UNCONFIRMED_LOG_TAG
+    return [w for w in warnings if w.startswith(UNCONFIRMED_LOG_TAG)]
+
+
+def test_a_timeout_is_logged_as_unconfirmed_with_the_file_id():
+    built = _build()
+    builder, warnings = _logged_builder(
+        _FakeUsers(exc=requests.exceptions.ReadTimeout("read timed out")))
+    with pytest.raises(requests.exceptions.ReadTimeout):
+        builder.submit(built)
+
+    [line] = _tagged(warnings)
+    assert "reason=timeout" in line
+    assert f"file={built.external_id}" in line
+    assert "requestor=SHEB" in line
+
+
+def test_a_connection_error_is_logged_as_unconfirmed():
+    builder, warnings = _logged_builder(
+        _FakeUsers(exc=requests.exceptions.ConnectionError("reset")))
+    with pytest.raises(requests.exceptions.ConnectionError):
+        builder.submit(_build())
+    [line] = _tagged(warnings)
+    assert "reason=connection" in line
+
+
+def test_a_toolkit_timeout_is_logged_as_unconfirmed():
+    """almaapitk >= 0.6.0 wraps timeouts in AlmaTimeoutError, an AlmaAPIError.
+    It must not fall through to the plain re-raise unlogged."""
+    almaapitk = pytest.importorskip("almaapitk")
+    if not hasattr(almaapitk, "AlmaTimeoutError"):
+        pytest.skip("almaapitk < 0.6.0 raises the raw requests timeout")
+    builder, warnings = _logged_builder(
+        _FakeUsers(exc=almaapitk.AlmaTimeoutError("timed out")))
+    with pytest.raises(almaapitk.AlmaTimeoutError):
+        builder.submit(_build())
+    assert "reason=timeout" in _tagged(warnings)[0]
+
+
+def test_a_duplicate_is_logged_as_unconfirmed():
+    built = _build()
+    builder, warnings = _logged_builder(_FakeUsers(exc=_alma_error(
+        "Failed to save the request: Patron has duplicate request", "402362")))
+    assert builder.submit(built)["status"] == "duplicate"
+
+    [line] = _tagged(warnings)
+    assert "reason=duplicate-402362" in line
+    assert f"file={built.external_id}" in line
+
+
+def test_other_api_errors_are_not_tagged():
+    builder, warnings = _logged_builder(_FakeUsers(exc=_alma_error(
+        "Patron is not affiliated with a resource sharing library", "401768")))
+    with pytest.raises(AlmaAPIError):
+        builder.submit(_build())
+    assert _tagged(warnings) == []
+
+
+def test_a_confirmed_create_is_not_tagged():
+    builder, warnings = _logged_builder(_FakeUsersSeq({"request_id": "1"}))
+    builder.submit(_build())
+    assert _tagged(warnings) == []
+
+
+def test_the_note_carries_no_marker():
+    assert "FORMS-BR-" not in _build().payload.get("note", "")

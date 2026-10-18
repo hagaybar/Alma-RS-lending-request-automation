@@ -328,6 +328,36 @@ file as `duplicate` (success-like) and moves it to `processed/`.
   endpoint for user RS requests (§5); enumeration goes through
   `/users/{id}/requests` and its nested `resource_sharing` block.
 
+### 8.4 Unconfirmed creates are logged, not marked (DECISION 2026-10-18)
+
+almaapitk 0.6.0 can find a timed-out create by a marker in the Request Note
+(AlmaAPITK #196). Shown to the RS team with before/after SANDBOX examples,
+the decision was **not to put any marker in the request**. Instead, every
+create whose outcome a run cannot confirm is logged under one fixed tag, so
+these cases can be monitored:
+
+```
+[BORROWING-UNCONFIRMED] reason=<timeout|connection|duplicate-402362> file=<FORMS-BR-… id> requestor=<proxy user> title='…' error=…
+```
+
+- `timeout` / `connection`: the create raised before Alma answered, so Alma
+  may or may not have saved it. The file stays in input and the next run
+  re-POSTs (unchanged behaviour).
+- `duplicate-402362`: Alma refused an identical request. Usually the earlier
+  attempt did save; the file finishes as `duplicate` with no `request_id`.
+- A `timeout` followed by a `duplicate-402362` for the same `file=` is the
+  usual pair. `file=` is the same file ID the reports show.
+- Monitor with `findstr /C:"[BORROWING-UNCONFIRMED]"` on the processor log
+  (masedet) or `grep -F` elsewhere.
+
+Facts verified while building the marker, still true and still the reason
+`request_id` stays unknowable on a `402362`:
+
+- `VERIFIED` SANDBOX 2026-10-14: Alma replaces the POSTed `external_id`, so a
+  lookup by our id finds nothing (§8.3, GH #14).
+- `VERIFIED` SANDBOX 2026-10-14: the linked hold in `GET /users/{id}/requests`
+  carries the request `note` verbatim, and `402362` ignores `note`.
+
 ## 9. Upstream evidence — 2026-07-22 (AlmaAPITK `rs-borrowing-ergonomics`)
 
 The AlmaAPITK session of 2026-07-22 (PR #206 merged to its `main`, closing
