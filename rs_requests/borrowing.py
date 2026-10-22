@@ -1,0 +1,347 @@
+"""Borrowing (user resource-sharing) request builder.
+
+Field values trace to docs/BORROWING_REQUESTS.md §4 (1912 real SANDBOX
+requests, 100 read in full) and §9 (live upstream evidence, 2026-07-22). Do
+not change a value without updating that document and the evidence behind it.
+
+The wire shape is assembled by almaapitk.build_user_rs_request (>= 0.5.0),
+which encodes Alma's plain-vs-{"value": ...} wrapping rules once, upstream.
+This module owns WHAT to send; the toolkit owns HOW to shape it.
+"""
+from __future__ import annotations
+
+import logging
+import re
+from typing import Any, Dict, Optional
+
+import requests
+from almaapitk import AlmaAPIError, AlmaValidationError, build_user_rs_request
+
+try:
+    from almaapitk import AlmaTimeoutError
+except ImportError:  # almaapitk < 0.6.0 raises the raw requests timeout
+    AlmaTimeoutError = requests.exceptions.Timeout
+
+from rs_requests.base import BuiltRequest, RequestBuilder
+from rs_requests.errors import BorrowingValidationError
+from rs_requests.pii import mask_lcc_number
+
+
+#: DECISION 2026-07-22 — articles only. CR is the librarians' UI value and
+#: the live-proven shape (DIGITAL+CR, guidebook §9). BK is out of scope
+#: (PHYSICAL+BOOK reproducibly 500s in SANDBOX — AlmaAPITK #207); E_CR is
+#: accepted at create but DISCARDS journal_title/issue/doi/pmid at persist
+#: (A/B probe 2026-07-22) and appears in 0 of 1912 real requests.
+ALLOWED_CITATION_TYPES = ("CR",)
+
+#: Marker appended to `note` when Alma's self-ownership block (401604) is
+#: cleared. These requests are sent without any human step, so this is the
+#: only handle on them in Alma afterwards — see docs/BORROWING_REQUESTS.md §10.
+SELF_OWNERSHIP_STAMP = (
+    "[auto] Alma 401604 self-ownership overridden: the title is held, the "
+    "requested year is outside coverage, and no article-level access was "
+    "found upstream."
+)
+
+#: DECISION 2026-10-18: a create whose outcome this run cannot confirm is
+#: logged under this fixed tag, and nothing is added to the request itself.
+#: Two cases: a timeout or connection error (Alma may have saved the
+#: request), and a 402362 (Alma holds an identical request but does not say
+#: which). Grep the log for the tag to monitor them; the file= value is the
+#: same file ID the reports show.
+UNCONFIRMED_LOG_TAG = "[BORROWING-UNCONFIRMED]"
+
+
+class BorrowingRequestBuilder(RequestBuilder):
+    kind = "borrowing"
+    needs_metadata = True     # the processor enriches before calling build()
+
+    def build(self, form_data: Dict[str, Any],
+              metadata: Optional[Dict[str, Any]] = None) -> BuiltRequest:
+        cfg = self.processor.borrowing_config
+        meta = metadata or {}
+
+        citation_type = (form_data.get("material_type")
+                         or cfg.get("default_citation_type", "CR")).upper()
+        if citation_type not in ALLOWED_CITATION_TYPES:
+            raise BorrowingValidationError(
+                f"citation_type {citation_type!r} is out of scope: this "
+                f"pipeline creates DIGITAL article requests only "
+                f"(DECISION 2026-07-22). Allowed: "
+                f"{', '.join(ALLOWED_CITATION_TYPES)}."
+            )
+
+        title = meta.get("title", "").strip()
+        if not title:
+            raise BorrowingValidationError("citation metadata has no title")
+
+        # Every request is an article — the trio is unconditionally
+        # mandatory (Alma 401930, confirmed live 2026-07-22).
+        missing = [name for name, key in
+                   (("journal_title", "journal"), ("author", "author"), ("year", "year"))
+                   if not meta.get(key, "").strip()]
+        if missing:
+            raise BorrowingValidationError(
+                f"an article request requires {', '.join(missing)} "
+                f"(Alma returns alma_code 401930 without them)"
+            )
+
+        hospital = form_data["requestor"]
+        order_number = (form_data.get("order_number") or "").strip()
+        # Stable across retries (GH #13): the token is the input file's mtime
+        # (stamped by the reader), and the sanitized stem is unique among
+        # concurrently pending files (a directory cannot hold two files with
+        # one name). Same file → same id in every log line and report row, so
+        # a retry is traceable to its earlier attempts. Alma does NOT store
+        # this id (GH #14) — duplicate safety is Alma's 402362 rejection, see
+        # submit().
+        token = (form_data.get("file_token") or "").strip()
+        if not token:
+            raise BorrowingValidationError(
+                "file_token missing from form data — reader must stamp it"
+            )
+        stem = re.sub(r"[^A-Za-z0-9_-]", "_", form_data.get("filename") or "")[:40]
+        external_id = f"FORMS-BR-{hospital}-{token}-{stem}"
+        if order_number:
+            external_id = f"{external_id}-{order_number}"
+
+        # --- extra: everything build_user_rs_request has no kwarg for ----
+        # Constants: 100/100 in the verified sample (guidebook §4.1). The
+        # builder applies its wrapping rules to `extra` too, so plain values
+        # here stay correct even if a field is reclassified upstream.
+        extra: Dict[str, Any] = {
+            "requested_media": cfg.get("requested_media", "7"),
+            "allow_other_formats": False,
+            "willing_to_pay": False,
+        }
+
+        # Bibliographic fields: included only when non-empty ("" must be
+        # omitted, not sent blank). isbn is not mapped: neither toolkit
+        # metadata helper can produce it (GH #18); reinstate only after
+        # almaapitk grows ISBN extraction.
+        for key, source in (("volume", "volume"), ("issue", "issue"),
+                            ("pages", "pages"), ("start_page", "start_page"),
+                            ("end_page", "end_page"), ("issn", "issn"),
+                            ("doi", "doi"), ("pmid", "pmid"),
+                            ("publisher", "publisher")):
+            value = (meta.get(source) or "").strip()
+            if value:
+                extra[key] = value
+
+        # The order number leads `note` (the UI's "Request Note") — the only
+        # place Alma shows it: external_id is discarded (GH #14) and
+        # lcc_number is opt-in. The requester's own note follows it.
+        note = " | ".join(part for part in (
+            f"Order: {order_number}" if order_number else "",
+            (form_data.get("notes") or "").strip(),
+        ) if part)
+        if note:
+            extra["note"] = note
+
+        template = (cfg.get("lcc_number_template") or "").strip()
+        if template:
+            try:
+                extra["lcc_number"] = template.format(
+                    hospital=hospital,
+                    order_number=order_number,
+                    patron_name=(form_data.get("patron_name") or "").strip(),
+                ).strip()
+            except (KeyError, IndexError) as e:
+                raise BorrowingValidationError(
+                    f"lcc_number_template {template!r} references an "
+                    f"unknown placeholder: {e}"
+                ) from e
+            self.processor._log_pii(
+                logging.DEBUG,
+                f"  lcc_number: {extra['lcc_number']}",
+                f"  lcc_number: {mask_lcc_number(extra['lcc_number'])}",
+            )
+
+        # Deliberately NOT sent — see docs/BORROWING_REQUESTS.md:
+        #   external_id   Alma discards the client value and substitutes a
+        #                 broker id (972TAU…) — GH #14, re-confirmed upstream
+        #                 2026-07-22. The local FORMS-BR-… id above exists
+        #                 only for logs, reports and file correlation.
+        #   partner       assigned by the rota after creation
+        #   mms_id        Alma generates a placeholder bib from this metadata
+        #   oclc_number   written by the supplier, not the requester
+        #   level_of_service / copyright_status  empty in 100/100
+
+        # The toolkit builder owns the wire shape: owner plain,
+        # format/citation_type/pickup_location wrapped {"value": ...},
+        # pickup_location_type plain (the §4.1 asymmetry, encoded once
+        # upstream — AlmaAPITK PR #206, live-proven 2026-07-22). The trio
+        # below was validated non-empty above, so the builder's
+        # _require_rs_text guards cannot fire here.
+        payload = build_user_rs_request(
+            owner=cfg.get("owner", "AM1"),
+            format=cfg.get("default_format", "DIGITAL"),
+            citation_type=citation_type,
+            title=title,
+            journal_title=meta.get("journal", "").strip(),
+            author=meta.get("author", "").strip(),
+            year=meta.get("year", "").strip(),
+            pickup_location=cfg.get("pickup_location", "AM1"),
+            pickup_location_type=cfg.get("pickup_location_type", "LIBRARY"),
+            # Fallback True: Alma rejects false at create (401897, SB T-04
+            # 2026-07-30), so a missing config key must not build a payload
+            # that is known to fail.
+            agree_to_copyright_terms=bool(cfg.get("agree_to_copyright_terms", True)),
+            extra=extra,
+        )
+
+        return BuiltRequest(
+            kind=self.kind,
+            external_id=external_id,
+            payload=payload,
+            summary={"detected_type": form_data.get("identifier_type", ""),
+                     "title": title, "requestor": hospital,
+                     "citation_type": citation_type},
+        )
+
+    def submit(self, built: BuiltRequest) -> Dict[str, Any]:
+        # The processor already wires a Users client (see the processor's
+        # __init__); reuse it rather than constructing a second one.
+        users = self.processor.users
+        hospital = built.summary["requestor"]
+        cfg = self.processor.borrowing_config
+        payload, override = built.payload, False
+
+        # At most two passes: the plain create, then — only for Alma's
+        # self-ownership block — one retry carrying override_blocks.
+        for attempt in (1, 2):
+            try:
+                # validate=True (almaapitk >= 0.5.0): a wrong code-table value
+                # raises AlmaValidationError naming the field BEFORE any HTTP.
+                response = users.create_user_rs_request(
+                    hospital, payload, validate=True,
+                    **({"override_blocks": True} if override else {}))
+            except (AlmaTimeoutError, requests.exceptions.RequestException) as e:
+                # Before the AlmaAPIError clause: almaapitk >= 0.6.0's
+                # AlmaTimeoutError is an AlmaAPIError. Re-raised either way —
+                # see the comment after the loop.
+                self._log_unconfirmed(built, self._transport_reason(e), e)
+                raise
+            except AlmaValidationError as e:
+                # AlmaValidationError subclasses ValueError, NOT AlmaAPIError,
+                # so without this clause it escapes to the processor's generic
+                # handler as a retryable 'error' — retried every minute for
+                # what is actually a permanent config typo (e.g. an
+                # undocumented code-table value). Re-raise as
+                # BorrowingValidationError, which the processor's except
+                # ladder maps to a permanent 'skipped'.
+                raise BorrowingValidationError(str(e)) from e
+            except AlmaAPIError as e:
+                if self._is_duplicate_rejection(e):
+                    # DECISION 2026-07-20 (GH #35): Alma's duplicate check IS
+                    # the safety mechanism. This fires when an identical
+                    # request is already active for this patron — most
+                    # importantly when a previous run's create timed out AFTER
+                    # saving. Treat as already created: report it and let the
+                    # file move out of input, ending the retry loop.
+                    self.processor.logger.warning(
+                        f"  Alma rejected as duplicate (402362): an identical "
+                        f"active request already exists for {hospital} — "
+                        f"treating as already created."
+                    )
+                    self._log_unconfirmed(built, "duplicate-402362", e)
+                    return {"status": "duplicate",
+                            "request_id": "",   # unknowable — Alma doesn't say which
+                            "external_id": built.external_id,
+                            "self_ownership_override": override,
+                            **built.summary}
+                if (attempt == 1 and self._is_self_ownership_rejection(e)
+                        and cfg.get("override_self_ownership", True)):
+                    # DECISION 2026-09-03 (RS team approval; guidebook §10).
+                    # Alma's Self Ownership check is title-level and never
+                    # consults coverage, so it fires on every article in a
+                    # journal we hold for other years. Power Automate's LibKey
+                    # check — article-level, coverage-aware — is what put this
+                    # file on the borrowing path at all, so a 401604 here means
+                    # "we hold the journal, not this article". Clear it and
+                    # retry once.
+                    #
+                    # Only on the retry, never on the first attempt: the same
+                    # flag also clears genuine patron blocks (fines, expired
+                    # accounts, loan limits), and nothing approved disabling
+                    # those for ordinary requests.
+                    self.processor.logger.warning(
+                        f"  Alma blocked the create with 401604 (institutional "
+                        f"inventory has services for the title). That check is "
+                        f"title-level and coverage-blind; LibKey already found "
+                        f"no article-level access. Retrying with "
+                        f"override_blocks — guidebook §10."
+                    )
+                    payload, override = self._stamp_override(built.payload), True
+                    continue
+                raise
+            break
+        # A timeout or connection error is logged and re-raised, never
+        # swallowed: the file stays in input, the next scheduled run re-POSTs,
+        # and if this create actually saved, Alma answers 402362 and the
+        # duplicate branch above finishes the job. Both steps carry
+        # UNCONFIRMED_LOG_TAG, so the pair can be read together in the log.
+        data = response.data or {}
+        self.processor.logger.info("✓ Borrowing request created")
+        self.processor.logger.info(f"  Request ID: {data.get('request_id')}")
+        if override:
+            self.processor.logger.info(
+                "  Self-ownership block was overridden (401604)")
+        return {"status": "success", "request_id": data.get("request_id"),
+                "external_id": built.external_id,
+                "self_ownership_override": override, **built.summary}
+
+    def _log_unconfirmed(self, built: BuiltRequest, reason: str,
+                         error: Exception) -> None:
+        """One greppable line for a create this run could not confirm."""
+        self.processor.logger.warning(
+            f"{UNCONFIRMED_LOG_TAG} reason={reason} file={built.external_id} "
+            f"requestor={built.summary['requestor']} "
+            f"title={built.summary['title']!r} error={error}"
+        )
+
+    @staticmethod
+    def _transport_reason(error: Exception) -> str:
+        if isinstance(error, (AlmaTimeoutError, requests.exceptions.Timeout)):
+            return "timeout"
+        return "connection"
+
+    @staticmethod
+    def _stamp_override(payload: Dict[str, Any]) -> Dict[str, Any]:
+        """A copy of the payload whose ``note`` names the override.
+
+        An override-created request goes straight out — Alma locates a partner
+        and attempts the send with no staff action (guidebook §10.7) — so this
+        marker is the only way to recognise one in Alma afterwards. The
+        requester's own note is preserved; ``note`` persists as sent (§9).
+        """
+        stamped = dict(payload)
+        note = (stamped.get("note") or "").strip()
+        stamped["note"] = f"{note} {SELF_OWNERSHIP_STAMP}".strip()
+        return stamped
+
+    @staticmethod
+    def _is_self_ownership_rejection(e: AlmaAPIError) -> bool:
+        """True when Alma refused the create because it holds the *title*.
+
+        Same shape as :meth:`_is_duplicate_rejection`: alma_code is the
+        structural match, the message substring covers error bodies the
+        toolkit could not parse into a code.
+        """
+        if getattr(e, "alma_code", "") == "401604":
+            return True
+        return "has services for the requested title" in str(e).lower()
+
+    @staticmethod
+    def _is_duplicate_rejection(e: AlmaAPIError) -> bool:
+        """True when Alma refused the create because an identical request is
+        already active for this patron (verified live 2026-07-20, GH #35).
+
+        alma_code is the structural match; the message fallback covers error
+        bodies the toolkit could not parse into a code. The substring match
+        is unaffected by the ``[almaapitk hint: ...]`` suffix that >= 0.5.0
+        appends to some unrenderable Alma 400s.
+        """
+        if getattr(e, "alma_code", "") == "402362":
+            return True
+        return "patron has duplicate request" in str(e).lower()

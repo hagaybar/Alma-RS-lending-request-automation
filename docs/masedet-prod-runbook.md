@@ -130,8 +130,8 @@ The smoke pins `environment="SANDBOX"`, never reads `ALMA_PROD_API_KEY`, does no
 
 ## 7. Known discrepancies / cleanup TODOs
 
-- **Batch name**: docs (`CLAUDE.md`, `TASK_SCHEDULER_SETUP.md`) reference `rs_forms_scheduled.bat`; prod actually runs `rs_forms_monitor_prod.bat` (local-only/gitignored).
-- **Cadence**: docs say every **1 minute**; actual scheduled task is every **5 minutes**.
+- **Batch name**: ✅ docs corrected 2026-09-06. `CLAUDE.md` and `TASK_SCHEDULER_SETUP.md` no longer claim `rs_forms_scheduled.bat` exists (it was renamed to `rs_forms_scheduled_dev_sb.bat` in `afa8777`); both now point here and name `rs_forms_monitor_prod.bat` (local-only/gitignored) as what prod runs. The batch itself is still untracked — see the next-but-one bullet.
+- **Cadence**: ✅ docs corrected 2026-09-06 — `CLAUDE.md` now says every **5 minutes**, matching the actual scheduled task.
 - **Stale batch banner**: ✅ corrected by hand on the prod box (banner now reads "scheduled single-run"). The batch is still local-only/gitignored, so the fix isn't version-controlled — decide whether to track `rs_forms_monitor_prod.bat` for parity with the sandbox sibling (one-time untracked-file removal on masedet needed if so).
 - **Rollback**: ✅ `scripts/rollback.sh` committed (see §5).
 - **Verify once**: confirm `Run-PoetryInstall` targets the in-project `.venv` the prod batch executes (`poetry config virtualenvs.in-project` semantics on masedet).

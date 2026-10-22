@@ -8,8 +8,12 @@ Tests the citation metadata utility and ResourceSharing domain integration:
 3. Create lending requests enriched with fetched metadata
 
 Test Articles:
-- PMID 33219451: "Remdesivir for the Treatment of Covid-19" (Nature Medicine)
-- DOI 10.1038/s41591-020-1124-9: Same article (cross-verification)
+- PMID 33219451: "Immobilization of Laccase on Magnetic Nanoparticles…"
+  (Applied Biochemistry and Biotechnology, 2021)
+- DOI 10.1038/s41591-020-1124-9: "A global survey of potential acceptance of
+  a COVID-19 vaccine" (Nature Medicine, 2021) — a DIFFERENT article; the
+  source comparison is informational, not an equality check. (Both labels
+  verified live 2026-07-30; an earlier docstring called both "Remdesivir".)
 """
 
 import argparse
@@ -249,13 +253,13 @@ Examples:
     parser.add_argument(
         "--pmid",
         default="33219451",
-        help="PubMed ID to test (default: 33219451 - Remdesivir COVID-19 article)"
+        help="PubMed ID to test (default: 33219451 - Laccase immobilization article)"
     )
 
     parser.add_argument(
         "--doi",
         default="10.1038/s41591-020-1124-9",
-        help="DOI to test (default: 10.1038/s41591-020-1124-9 - same article)"
+        help="DOI to test (default: 10.1038/s41591-020-1124-9 - COVID-19 vaccine acceptance survey, unrelated to the PMID article)"
     )
 
     parser.add_argument(

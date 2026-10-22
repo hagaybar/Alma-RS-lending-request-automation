@@ -36,6 +36,7 @@ logs/
 
 # Data files (user data, never commit)
 input/*.tsv
+input_borrowing/*.tsv
 processed/*.tsv
 
 # Output (logs and reports, never commit)
@@ -71,3 +72,6 @@ tests/live_smoke_data.json
 # Babysitter runtime (local-only; keep run history off the public repo)
 .a5c/runs/
 .a5c/cache/
+
+# Claude Code worktrees
+.claude/worktrees/
