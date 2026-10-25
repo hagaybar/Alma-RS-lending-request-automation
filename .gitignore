@@ -38,6 +38,7 @@ logs/
 input/*.tsv
 input_borrowing/*.tsv
 processed/*.tsv
+failed_files/*.tsv
 
 # Output (logs and reports, never commit)
 output/logs/*.log

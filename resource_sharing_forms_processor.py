@@ -164,6 +164,11 @@ class ResourceSharingFormsProcessor:
         borrowing_folder = config['file_processing'].get('borrowing_input_folder')
         self.borrowing_input_folder = Path(borrowing_folder) if borrowing_folder else None
         self.processed_folder = Path(config['file_processing']['processed_folder'])
+        # GH #48: a file that fails is moved here after its first attempt and
+        # never retried automatically. Defaults to a sibling of processed/.
+        failed_folder = config['file_processing'].get('failed_folder')
+        self.failed_folder = (Path(failed_folder) if failed_folder
+                              else self.processed_folder.parent / 'failed_files')
         self.output_dir = Path(config['file_processing']['output_dir'])
 
         self.poll_interval = config.get('watch_mode', {}).get('poll_interval', 60)
@@ -733,16 +738,33 @@ class ResourceSharingFormsProcessor:
         Args:
             file_path: Path to file to move
         """
-        # Ensure processed folder exists
-        self.processed_folder.mkdir(parents=True, exist_ok=True)
+        self._move_to_folder(file_path, self.processed_folder)
 
-        new_path = self.processed_folder / file_path.name
+    def move_to_failed(self, file_path: Path) -> None:
+        """
+        Move a file that failed to the failed folder under its original name.
+
+        Every failure moves on its first attempt, transient ones included (GH
+        #48). Retrying every run wrote a new per-file log and CSV row each
+        time, and a stuck backlog fired all at once when a later release fixed
+        the cause (2026-10-22). A timed-out borrowing create must not be
+        re-sent blindly either: with the PRODUCTION duplicate check off, the
+        re-send can create the request twice (guidebook §8.3). To retry, a
+        person moves the file back into its input folder.
+        """
+        self._move_to_folder(file_path, self.failed_folder)
+
+    def _move_to_folder(self, file_path: Path, folder: Path) -> None:
+        """Move *file_path* into *folder*, suffixing the name on a collision."""
+        folder.mkdir(parents=True, exist_ok=True)
+
+        new_path = folder / file_path.name
 
         # Preserve the existing file and suffix the incoming one on collision.
         if new_path.exists():
             free_path = self._next_available_path(new_path)
             self.logger.error(
-                f"Processed file already exists: {new_path.name} — "
+                f"File already exists in {folder.name}: {new_path.name} — "
                 f"saving incoming file as {free_path.name} instead"
             )
             new_path = free_path
@@ -892,6 +914,7 @@ class ResourceSharingFormsProcessor:
             # Move to processed folder
             if result['status'] in ['success', 'dry_run_success', 'duplicate']:
                 self.move_to_processed(file_path)
+                result['moved_to'] = 'processed'
 
         except IdentifierDetectionError as e:
             self.logger.error(f"✗ Identifier detection error: {e}")
@@ -927,6 +950,14 @@ class ResourceSharingFormsProcessor:
             self.logger.error(f"✗ Unexpected error: {e}", exc_info=True)
             result['status'] = 'error'
             result['error_message'] = f"Unexpected error: {e}"
+
+        if not result.get('moved_to') and file_path.exists():
+            try:
+                self.move_to_failed(file_path)
+                result['moved_to'] = 'failed'
+            except OSError as e:
+                # Left in place, so the next run tries it again.
+                self.logger.error(f"✗ Could not move {file_path.name} to failed folder: {e}")
 
         self.results.append(result)
 
@@ -1256,7 +1287,8 @@ class ResourceSharingFormsProcessor:
             lines.append("")
 
         # Move result
-        move_status = 'moved' if result.get('status') in ['success', 'dry_run_success'] else 'not moved'
+        moved_to = result.get('moved_to')
+        move_status = f"moved to {moved_to}" if moved_to else 'not moved'
         lines.append(f"[File Move]")
         lines.append(f"Move Result: {move_status}")
 

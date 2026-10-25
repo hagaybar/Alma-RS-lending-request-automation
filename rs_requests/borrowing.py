@@ -277,8 +277,9 @@ class BorrowingRequestBuilder(RequestBuilder):
                 raise
             break
         # A timeout or connection error is logged and re-raised, never
-        # swallowed: the file stays in input, the next scheduled run re-POSTs,
-        # and if this create actually saved, Alma answers 402362 and the
+        # swallowed: the processor moves the file to the failed folder (GH
+        # #48). If a person moves it back and this create had actually saved,
+        # Alma answers 402362 (when its duplicate check is on) and the
         # duplicate branch above finishes the job. Both steps carry
         # UNCONFIRMED_LOG_TAG, so the pair can be read together in the log.
         data = response.data or {}
