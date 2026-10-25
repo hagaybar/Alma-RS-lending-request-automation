@@ -320,11 +320,11 @@ file as `duplicate` (success-like) and moves it to `processed/`.
 - ~~**Go-live precondition:** RS librarians confirm
   `check_patron_duplicate_borrowing_requests=true` in **PRODUCTION** config.~~
   **Superseded 2026-10-22 (operator decision at go-live):** the parameter was
-  left unchanged in PRODUCTION. Without it, a timed-out create that did save
-  can be created a second time by the next run's re-POST. That risk is
-  accepted and handled by hand: watch for `[BORROWING-UNCONFIRMED]
-  reason=timeout|connection` (§8.4) and, when it appears, check Alma for two
-  requests with the same requestor and title, and cancel one.
+  left unchanged in PRODUCTION, so a re-POST after a timeout can create the
+  request twice. Since GH #48 there is no automatic re-POST: a timed-out file
+  moves to the failed folder. Before moving it back into its input folder,
+  check Alma for a request with the same requestor and title — if one exists,
+  the timed-out create saved and the file must not be re-sent.
   The sandbox proves the sandbox, not prod.
 - **Accepted residual risk** (operator decision): a retry whose rebuilt body
   differs — e.g. PubMed/Crossref metadata drift between runs — could escape
@@ -347,8 +347,9 @@ these cases can be monitored:
 ```
 
 - `timeout` / `connection`: the create raised before Alma answered, so Alma
-  may or may not have saved it. The file stays in input and the next run
-  re-POSTs (unchanged behaviour).
+  may or may not have saved it. The file moves to the failed folder (GH #48,
+  2026-10-25; before that it stayed in input and the next run re-POSTed).
+  Check Alma before moving it back for a retry (§8.3).
 - `duplicate-402362`: Alma refused an identical request. Usually the earlier
   attempt did save; the file finishes as `duplicate` with no `request_id`.
 - A `timeout` followed by a `duplicate-402362` for the same `file=` is the
