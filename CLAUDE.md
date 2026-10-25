@@ -82,9 +82,12 @@ poetry run python resource_sharing_forms_processor.py --config config/rs_forms_c
 - External ID includes timestamp to seconds, so reprocessing within the same second could collide
 - Borrowing `owner` is a plain string but `pickup_location` is wrapped `{"value": ...}` — the most common cause of a borrowing `BAD_REQUEST`
 - `agree_to_copyright_terms` must be `true` — Alma rejects `false` at create (401897; settled 2026-07-30, guidebook §4.6). `lcc_number_template` is still unresolved (awaiting the RS librarians); config-driven, empty means omit
-- A borrowing create can time out and still save — recovery is Alma's own `402362`
-  duplicate rejection on the next run's re-POST (see the Decision record in Task 5),
-  which depends on `check_patron_duplicate_borrowing_requests=true` in config
+- A borrowing create can time out and still save, and the next run re-POSTs it.
+  Alma's `402362` duplicate rejection only stops the repeat when the customer
+  parameter `check_patron_duplicate_borrowing_requests=true`. **PRODUCTION was
+  deliberately left unchanged at go-live (2026-10-22)**: duplicates are caught by
+  monitoring `[BORROWING-UNCONFIRMED]` in the processor log instead (guidebook §8.3–8.4).
+  Don't flip the parameter or treat it as a missing precondition
 - **`401604` is not a bug and not rare.** Alma's *Self Ownership* check is
   title-level (matches Title / ISBN-ISSN / LCCN / System Control Number) and
   never consults coverage dates, while Power Automate's LibKey check is

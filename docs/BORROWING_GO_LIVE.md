@@ -8,6 +8,12 @@
 > *is* the activation decision (`borrowing.enabled` defaults `true` and is
 > only a kill switch).
 
+> **Status 2026-10-22: borrowing is live in PRODUCTION.** `main` merged to
+> `prod` (PR #47), the prod config gained `borrowing_input_folder`, the
+> Power Automate flow was repointed, and one real borrowing and one real
+> lending request were confirmed. Step 5 was decided differently — see the
+> note there.
+
 ## The sequence
 
 1. **Verify the DevSandbox auto-deploy** (automatic, next scheduled run on
@@ -39,6 +45,8 @@
 5. **Production preflight**: confirm the customer parameter
    `check_patron_duplicate_borrowing_requests=true` in **PRODUCTION** Alma —
    the timeout-recovery mechanism (402362) depends on it.
+   **Decided 2026-10-22: not changed.** Duplicates from timed-out creates
+   are caught by manual monitoring instead (guidebook §8.3).
 
 6. **Ship to prod**: merge `main` → `prod` (explicit approval only, per repo
    rules — auto-deploys to `D:\Scripts\Prod\` on the next scheduled run),
