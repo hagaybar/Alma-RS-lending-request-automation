@@ -10,7 +10,7 @@ This script monitors a folder (typically synced with SharePoint) for TSV files c
 2. **Fetches citation metadata** from PubMed (PMID) or Crossref (DOI)
 3. **Verifies Academic Staff status** by looking up user in Alma (when user_id provided)
 4. **Creates lending request** in Alma via Partners API
-5. **Moves processed file** to completed folder with timestamp
+5. **Moves the file** to the processed folder (success) or the failed folder (any failure, after one attempt — no automatic retry), under its original name
 6. **Generates CSV report** with all results
 
 ## Features
@@ -99,6 +99,7 @@ See `config/rs_forms_config.example.json` for all options.
   "file_processing": {
     "input_folder": "/path/to/sharepoint/sync",
     "processed_folder": "/path/to/processed",
+    "failed_folder": "/path/to/failed_files",   // optional; default: sibling of processed_folder
     "output_dir": "/path/to/output"
   },
 
