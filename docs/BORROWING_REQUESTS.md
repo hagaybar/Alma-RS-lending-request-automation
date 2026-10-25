@@ -317,8 +317,14 @@ pipeline.** A create that times out after saving is recovered on the next
 scheduled run: the re-POST is rejected `402362`, the processor records the
 file as `duplicate` (success-like) and moves it to `processed/`.
 
-- **Go-live precondition:** RS librarians confirm
-  `check_patron_duplicate_borrowing_requests=true` in **PRODUCTION** config.
+- ~~**Go-live precondition:** RS librarians confirm
+  `check_patron_duplicate_borrowing_requests=true` in **PRODUCTION** config.~~
+  **Superseded 2026-10-22 (operator decision at go-live):** the parameter was
+  left unchanged in PRODUCTION. Without it, a timed-out create that did save
+  can be created a second time by the next run's re-POST. That risk is
+  accepted and handled by hand: watch for `[BORROWING-UNCONFIRMED]
+  reason=timeout|connection` (§8.4) and, when it appears, check Alma for two
+  requests with the same requestor and title, and cancel one.
   The sandbox proves the sandbox, not prod.
 - **Accepted residual risk** (operator decision): a retry whose rebuilt body
   differs — e.g. PubMed/Crossref metadata drift between runs — could escape
