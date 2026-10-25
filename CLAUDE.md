@@ -33,6 +33,7 @@ poetry run python resource_sharing_forms_processor.py --config config/rs_forms_c
 - `batch/` — Windows batch files for launching
 - `input/` — Watched folder for incoming TSV files from Power Automate
 - `processed/` — Completed files moved here under their original input filename (numeric suffix `name (1).ext` only on a name collision)
+- `failed_files/` — Files that failed, moved here after their first attempt, same naming rule (`file_processing.failed_folder`; defaults to a sibling of `processed/`)
 - `output/logs/` — Processor and heartbeat logs
 - `output/reports/` — CSV processing reports
 
@@ -42,7 +43,8 @@ poetry run python resource_sharing_forms_processor.py --config config/rs_forms_c
 - **Pipeline + builders split**: The scheduled pipeline (file I/O, dry-run/live dispatch, reporting) lives in `resource_sharing_forms_processor.py` (~1500 lines); the request build/submit step lives behind `rs_requests/` builders (`lending.py`, `borrowing.py`)
 - **Identifier auto-detection**: PMID (6-9 digits) vs DOI (starts with 10.) — ignores user-provided type
 - **Error isolation**: One file's error never stops the batch; errors logged, processing continues
-- **File-as-state**: Files in `input/` = pending, files in `processed/` = done (kept under the original input filename so downstream automation can verify processing by matching the same name)
+- **File-as-state**: Files in `input/` = pending, files in `processed/` = done (kept under the original input filename so downstream automation can verify processing by matching the same name), files in `failed_files/` = failed
+- **One attempt per file, no automatic retry** (GH #48): any failure, transient or permanent, moves the file to `failed_files/`. Retrying every run wrote a log and CSV row per attempt and let a stuck backlog fire months later (2026-10-22). To retry, a person moves the file back into its input folder. Don't reintroduce automatic retries
 - **Two request kinds, one pipeline**: Power Automate forks on a holdings check — held → `input/` → lending; not held → `input_borrowing/` → borrowing. Only the terminal build/submit step differs.
 - **`SHEB` is ambiguous**: a *partner code* on the lending path, a *proxy user code* on the borrowing path. Never move one between paths.
 - **Borrowing field values are evidence-backed**: `docs/BORROWING_REQUESTS.md` derives them from 1912 real requests. Change a value there, with evidence, before changing it in code.
@@ -82,9 +84,13 @@ poetry run python resource_sharing_forms_processor.py --config config/rs_forms_c
 - External ID includes timestamp to seconds, so reprocessing within the same second could collide
 - Borrowing `owner` is a plain string but `pickup_location` is wrapped `{"value": ...}` — the most common cause of a borrowing `BAD_REQUEST`
 - `agree_to_copyright_terms` must be `true` — Alma rejects `false` at create (401897; settled 2026-07-30, guidebook §4.6). `lcc_number_template` is still unresolved (awaiting the RS librarians); config-driven, empty means omit
-- A borrowing create can time out and still save — recovery is Alma's own `402362`
-  duplicate rejection on the next run's re-POST (see the Decision record in Task 5),
-  which depends on `check_patron_duplicate_borrowing_requests=true` in config
+- A borrowing create can time out and still save. The file then goes to
+  `failed_files/`, not back through the next run (GH #48); re-sending it by hand
+  can create it twice. Alma's `402362` duplicate rejection only stops the repeat
+  when the customer parameter `check_patron_duplicate_borrowing_requests=true`. **PRODUCTION was
+  deliberately left unchanged at go-live (2026-10-22)**: duplicates are caught by
+  monitoring `[BORROWING-UNCONFIRMED]` in the processor log instead (guidebook §8.3–8.4).
+  Don't flip the parameter or treat it as a missing precondition
 - **`401604` is not a bug and not rare.** Alma's *Self Ownership* check is
   title-level (matches Title / ISBN-ISSN / LCCN / System Control Number) and
   never consults coverage dates, while Power Automate's LibKey check is

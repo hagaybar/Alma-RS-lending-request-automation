@@ -10,6 +10,7 @@
     "input_folder": "./input",
     "borrowing_input_folder": "./input_borrowing",
     "processed_folder": "./processed",
+    "failed_folder": "./failed_files",
     "output_dir": "./output"
   },
   "watch_mode": {
@@ -43,6 +44,7 @@
     "format_type: DIGITAL or PHYSICAL (default: DIGITAL)",
     "input_folder: Path to SharePoint sync folder with form submissions",
     "processed_folder: Where completed files are moved",
+    "failed_folder: Where files that failed are moved after one attempt (GH #48) — never retried automatically; move a file back into its input folder to retry. Optional; defaults to failed_files next to processed_folder",
     "output_dir: Where logs and reports are saved",
     "poll_interval: Seconds between checks in watch mode (default: 60)",
     "api_timeout_seconds: Alma API client HTTP timeout in seconds (default: 180) — shared by lending and borrowing creates; a borrowing create can exceed the previous 60s default and still save",
