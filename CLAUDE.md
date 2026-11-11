@@ -76,6 +76,11 @@ poetry run python resource_sharing_forms_processor.py --config config/rs_forms_c
 - `main` — Development branch (use for all coding)
 - `prod` — Production branch. **Never commit or code directly on prod.** All changes reach prod only via merge from `main` (or from feature branches into `main` first).
 
+## almaapitk bumps
+
+Any change to the `almaapitk` pin follows `docs/almaapitk-bump-protocol.md` (binding): one bump
+at a time, from this repo, with an audit in `docs/almaapitk-<version>-audit.md`.
+
 ## Gotchas
 
 - Config files with `_prod` or `_sandbox` in the name are gitignored
