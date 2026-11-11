@@ -20,7 +20,9 @@ def test_build_user_rs_request_is_exported():
 
 def test_create_user_rs_request_has_the_validate_preflight():
     sig = inspect.signature(Users.create_user_rs_request)
-    assert list(sig.parameters) == [
+    # Prefix is the contract; later releases append keyword-only options
+    # (0.6.0: timeout, reconcile, reconcile_marker).
+    assert list(sig.parameters)[:6] == [
         "self", "user_id", "request_data", "user_id_type", "override_blocks",
         "validate",
     ]
