@@ -51,7 +51,10 @@ arguments.
 ## (d) Repo-specific risks
 
 - **Duplicate creates:** none added. POST isn't retried. A read timeout is still reported as
-  unconfirmed, and Alma's `402362` duplicate check stays the safety net.
+  unconfirmed (`[BORROWING-UNCONFIRMED]` in the processor log). That log line is the
+  production safety net: Alma's `402362` duplicate check only fires when
+  `check_patron_duplicate_borrowing_requests=true`, which production deliberately left off at
+  go-live (2026-10-22).
 - **Classification:** a 429 or 5xx now always arrives as `AlmaRateLimitError` or
   `AlmaServerError`. Both reach the `AlmaAPIError` clause and fall through
   `_is_duplicate_rejection`, as before.
