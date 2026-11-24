@@ -29,3 +29,4 @@ Production: Task Scheduler on masedet, every 5 minutes, from the `prod` branch (
 - Alma resource-sharing API (requests, partners, error codes such as 401604 and 402362): load the `alma-resource-sharing` skill
 - Borrowing field values and their evidence: [docs/BORROWING_REQUESTS.md](docs/BORROWING_REQUESTS.md)
 - Open work: [docs/OPEN-TASKS.md](docs/OPEN-TASKS.md)
+- `AGENTS.md` is the reviewer's brief (Codex reviews, report only)
