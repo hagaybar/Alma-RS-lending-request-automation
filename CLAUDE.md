@@ -28,5 +28,6 @@ Production: Task Scheduler on masedet, every 5 minutes, from the `prod` branch (
 - Folder map, how the pipeline works, deployment details, repo quirks: [docs/architecture.md](docs/architecture.md)
 - Alma resource-sharing API (requests, partners, error codes such as 401604 and 402362): load the `alma-resource-sharing` skill
 - Borrowing field values and their evidence: [docs/BORROWING_REQUESTS.md](docs/BORROWING_REQUESTS.md)
+- Changing the `almaapitk` pin: follow [docs/almaapitk-bump-protocol.md](docs/almaapitk-bump-protocol.md) (binding; one bump at a time, audit in `docs/almaapitk-<version>-audit.md`)
 - Open work: [docs/OPEN-TASKS.md](docs/OPEN-TASKS.md)
 - `AGENTS.md` is the reviewer's brief (Codex reviews, report only)
