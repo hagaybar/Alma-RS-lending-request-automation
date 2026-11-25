@@ -46,6 +46,10 @@ It should print the key value, not `%ALMA_PROD_API_KEY%`.
 
 ## 3. Task Scheduler Configuration (Step by Step)
 
+> **Current state (2026-11-25).** Only the **prod** task runs on a schedule (every 5 minutes,
+> see [masedet-prod-runbook.md](masedet-prod-runbook.md)). The DevSandbox task,
+> `RS SB Lending-Borrowing (on demand)`, has **no trigger**: skip §3.4 for it and start it by hand when testing.
+
 ### 3.1 Open Task Scheduler
 
 Run `taskschd.msc`, or search for "Task Scheduler" in the Start menu.

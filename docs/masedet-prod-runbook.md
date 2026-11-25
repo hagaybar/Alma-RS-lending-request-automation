@@ -21,6 +21,8 @@ For this repo: `D:\Scripts\DevSandbox\Alma-RS-lending-request-automation` (main)
 - Updates each repo **per branch** from GitHub: when a branch is updated on GitHub, the matching masedet folder is `git pull`-ed later (when configured and no errors).
 - Handles Poetry: each branch has a flag (set **true** for this repo) that triggers `Run-PoetryInstall(repoDir, repoName, logFile)` — so a changed `poetry.lock` is installed into that checkout's venv automatically. **This is why a dependency bump actually lands on prod instead of silently no-op-ing.**
 
+**DevSandbox task:** `RS SB Lending-Borrowing (on demand)` runs `batch\rs_forms_scheduled_dev_sb.bat` (SANDBOX, `config\tests-config.json`). It has no schedule since 2026-11-25; start it by hand when testing. Only the prod task below runs on a schedule.
+
 **Prod scheduled job:**
 - Windows Task Scheduler, **every 5 minutes**, runs `D:\Scripts\Prod\Alma-RS-lending-request-automation\batch\rs_forms_monitor_prod.bat`.
 - That batch (local-only — **gitignored**, not in the repo) does:

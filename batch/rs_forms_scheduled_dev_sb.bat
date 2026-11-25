@@ -1,8 +1,9 @@
 @echo off
 REM ========================================
 REM Resource Sharing Forms Processor
-REM Scheduled Task - Single-Run Mode (SANDBOX)
-REM Called by Windows Task Scheduler every 1 minute
+REM Single-Run Mode (SANDBOX)
+REM Run by the task "RS SB Lending-Borrowing (on demand)", which has no
+REM schedule since 2026-11-25: start it by hand when testing
 REM Lock file prevents overlapping executions
 REM ========================================
 

@@ -79,8 +79,9 @@ owner runs it before merging.
 
 ### 8. DevSandbox (masedet)
 
-After the next scheduled auto-deploy of `main`, confirm at least one clean cycle on the
-DevSandbox clone (see "This repo" for what clean means). Note it in the issue.
+After the next auto-deploy of `main`, run the repo's DevSandbox check on masedet (see "This
+repo"). If L3 in step 6 already ran there, on the deployed `main`, it counts. Note the result in
+the issue.
 
 ### 9. Prod
 
@@ -123,7 +124,17 @@ high-risk.
   to end, with `config/tests-config.json --live`. This is what
   `batch/rs_forms_scheduled_dev_sb.bat` runs. Never run `--live` against PRODUCTION during a
   bump.
-- **Clean DevSandbox cycle:** the 5-minute SANDBOX task runs for a day. Each run has a line in
-  `output/logs/runs_<date>.log`, the daily CSV has no new `error` rows, and no duplicate
-  requests appear in Alma.
+- **DevSandbox check (masedet):** the SANDBOX task, `RS SB Lending-Borrowing (on demand)`, has
+  no schedule since 2026-11-25, so there is no "clean day" to wait for. Instead, on masedet:
+  1. In `D:\Scripts\DevSandbox\Alma-RS-lending-request-automation`: confirm
+     `config\tests-config.json` says `"environment": "SANDBOX"` and note its `input_folder`,
+     `borrowing_input_folder` and `output_dir`; `git log -1` shows the merged `main`;
+     `poetry run python -c "import almaapitk; print(almaapitk.__version__)"` shows the new version.
+  2. Write one lending and one borrowing test TSV (test codes, one PMID, a note saying it is a
+     test, no patron data) into those two input folders, UTF-8 **without** a BOM.
+  3. `Start-ScheduledTask -TaskName "RS SB Lending-Borrowing (on demand)"` and wait for it to end
+     (`LastTaskResult` 0).
+  4. Both files are in `processed`, today's `<output_dir>\reports\processed_<date>.csv` has two
+     `success` rows with request IDs, and both requests read back from the Alma sandbox.
+  The 0.7.0 run (issue #55, 2026-11-25) is the worked example.
 - **More:** `docs/masedet-prod-runbook.md` (prod operations), `docs/TASK_SCHEDULER_SETUP.md`.
