@@ -1,15 +1,13 @@
 # Open tasks
 
-Last updated: 2026-11-15
-
-## PRs
-- #56 (bump almaapitk to >=0.7.0; audit SAFE, 142 tests pass, CI green) — Hagay: run the SANDBOX end-to-end check (one lending + one borrowing form; the sandbox clone has no forms config), then merge to `main`, one clean DevSandbox cycle on masedet, then Hagay merges to `prod`
+Last updated: 2026-11-25
 
 ## Issues
-- #55 (almaapitk 0.7.0 bump tracker, per `docs/almaapitk-bump-protocol.md`) — at the sandbox-check step; closes with PR #56 → prod
-- #54 (failure-mode audit: map the run context, then find unintended loops and side effects; filed in 13 repos 2026-11-10, replaced #51) — not started; can be done without outside input
+- #54 (failure-mode audit: map the run context, then find unintended loops and side effects; filed in 13 repos 2026-11-10) — not started; can be done without outside input
 
 ## Other
-- Stale local branches `docs/prod-duplicate-check-decision`, `release/failed-folder`, `fix/failed-folder`, `worktree-docs-prod-duplicate-check-decision` (all landed via #49/#50/#53) — delete, on Hagay's OK
-- Follow-up from the 0.7.0 bump: adopt `reconcile=True` on Alma creates (separate change, after #56 reaches prod)
+- Docs still describe a 5-minute SANDBOX task on masedet; since 2026-11-25 it is `RS SB Lending-Borrowing (on demand)` with no schedule. Update `docs/architecture.md`, `docs/TASK_SCHEDULER_SETUP.md` and `docs/almaapitk-bump-protocol.md` (step 8 "clean DevSandbox day" becomes one on-demand L3 run) — agent, no outside input
+- Adopt `reconcile=True` on Alma creates (almaapitk 0.7.0 is in prod since 2026-11-25; finds the request a timed-out create actually saved) — separate change, needs a SANDBOX test on masedet
+- Remote test runner (run DevSandbox jobs on masedet without logging in) — claude-wsl owns it in hagaybar/masedet-ws-ops#17; the draft plan sits untracked in `docs/dashboards/` here: commit it or delete it, Hagay's call
+- Stale branches, all landed: `chore/almaapitk-0.7.0` (#56), `docs/prod-runbook-paths` (#60), `docs/slim-claude-md` (#58), `release/failed-folder` (#53) — delete, on Hagay's OK
 - Track the prod batch file `batch/rs_forms_monitor_prod.bat` for parity with its sandbox sibling (runbook §7 TODO)
