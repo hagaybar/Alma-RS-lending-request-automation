@@ -30,7 +30,18 @@ For this repo: `D:\Scripts\DevSandbox\Alma-RS-lending-request-automation` (main)
   ```
 - **Runs the in-project `.venv` Python directly** (NOT `poetry run` — a comment in the batch notes `poetry run` "might hang Task Scheduler"). Consequence: the bump only takes effect once `Run-PoetryInstall` has refreshed `D:\Scripts\Prod\...\.venv`.
 - CLI semantics (`resource_sharing_forms_processor.py:1442-1452`): `--live` (no `--watch`) ⇒ **live, single-run, `scheduled_mode=True`**. So each 5-min fire is one scan-and-exit, with the scheduled-mode output channels (per-file logs, daily CSV report, daily runs heartbeat) active. The batch's "WATCH MODE / every 60 seconds / Ctrl+C" banner text is **stale** and does not reflect behavior.
-- Overlap protection: `output\.processor.lock` (PID-based stale-lock detection) prevents two runs colliding.
+- Overlap protection: `<output_dir>\.processor.lock` (PID-based stale-lock detection) prevents two runs colliding.
+
+**Folders.** Every `output\...` path in this runbook is relative to the prod config's `output_dir`, **not** to the repo folder. As read from `config\rs_forms_config.json` on masedet (2026-11-25):
+
+| Config key | Folder under `D:\Tel-Aviv University\masedet - Documents\Data\` |
+|---|---|
+| `input_folder` | `rs_form\lending_input` |
+| `borrowing_input_folder` | `rs_form\borrowing_input` |
+| `processed_folder` | `rs_form\processed_files` |
+| `output_dir` | `rs_form\processor_output` (logs in `logs\`, CSVs in `reports\`, the lock file) |
+
+`failed_folder` is not set, so failed files go to `failed_files` next to `processed_folder`. The `Data\temp\...` paths in older snapshots (and in masedet-ws-ops' `status_collectors.json`) belong to the retired watch-mode setup; don't use them. If in doubt, read the config itself: `Select-String config\rs_forms_config.json -Pattern '_folder"|output_dir'`.
 
 **Runs as:** the interactive `masedet` user.
 
@@ -81,11 +92,11 @@ cd D:\Scripts\Prod\Alma-RS-lending-request-automation
 .venv\Scripts\python.exe -c "import almaapitk; print(almaapitk.__version__)"   # expect the bumped version
 ```
 
-Then confirm the scheduled job is healthy on its next 5-min fire:
-- **Daily run heartbeat** `output\logs\runs_YYYYMMDD.log` — a new line every fire (proves the task is invoking).
-- **Processor log** `output\logs\processor.log` — no new tracebacks; Alma connection OK.
-- **Daily report** `output\reports\processed_YYYYMMDD.csv` — files processed as expected.
-- **No stuck lock**: `output\.processor.lock` should not persist with a dead PID.
+Then confirm the scheduled job is healthy on its next 5-min fire. `<output_dir>` is `D:\Tel-Aviv University\masedet - Documents\Data\rs_form\processor_output` (see §1, Folders):
+- **Daily run heartbeat** `<output_dir>\logs\runs_YYYYMMDD.log` — a new line every fire (proves the task is invoking).
+- **Processor log** `<output_dir>\logs\processor.log` — no new tracebacks; Alma connection OK.
+- **Daily report** `<output_dir>\reports\processed_YYYYMMDD.csv` — files processed as expected.
+- **No stuck lock**: `<output_dir>\.processor.lock` should not persist with a dead PID.
 
 ---
 
