@@ -39,18 +39,18 @@ Python 3.12+, managed with Poetry; depends on `almaapitk` from PyPI (version flo
 ## Deployment details
 
 - Runs on a **remote physical Windows machine** (not WSL/cloud)
-- **Production mode**: Windows Task Scheduler on masedet runs the processor in single-run mode (`--live` without `--watch`). It fires `batch/rs_forms_monitor_prod.bat`, which is **local-only and gitignored — not in this repo**. Per [docs/masedet-prod-runbook.md](docs/masedet-prod-runbook.md) §7 the real cadence is **every 5 minutes**, not the 1 minute these docs used to claim; that section also carries the standing TODO to track the prod batch for parity with its sandbox sibling
-- **DevSandbox (SANDBOX) task**: `RS SB Lending-Borrowing (on demand)` runs `batch/rs_forms_scheduled_dev_sb.bat`. Since 2026-11-25 it has **no schedule**: start it by hand when testing (`Start-ScheduledTask -TaskName "RS SB Lending-Borrowing (on demand)"`). It replaced the 5-minute "RS Lending-Borrowing Request Monitor"; a backup of the old definition is `D:\_ops\rs_sb_task_backup.xml` on masedet
+- **Production mode**: a Windows scheduled task on the production workstation runs the processor in single-run mode (`--live` without `--watch`), **every 5 minutes**. It fires `batch/rs_forms_monitor_prod.bat`, which is **local-only and gitignored — not in this repo** (standing TODO: track it for parity with its sandbox sibling)
+- **DevSandbox (SANDBOX) task**: `RS SB Lending-Borrowing (on demand)` runs `batch/rs_forms_scheduled_dev_sb.bat`. Since 2026-11-25 it has **no schedule**: start it by hand when testing (`Start-ScheduledTask -TaskName "RS SB Lending-Borrowing (on demand)"`). It replaced the 5-minute "RS Lending-Borrowing Request Monitor"; a backup of the old definition is kept on the workstation
 - **Lock file**: `output/.processor.lock` prevents overlapping executions; includes PID-based stale-lock detection
 - **Three scheduled-mode output channels**:
   - Per-file log (`output/file_logs/`) — detailed trace for each processed TSV
   - Daily CSV report (`output/reports/processed_{YYYYMMDD}.csv`) — tabular summary
   - Daily run log (`output/logs/runs_{YYYYMMDD}.log`) — heartbeat confirming every invocation
-- **Batch files** — both tracked ones `cd` to `D:\Scripts\DevSandbox\` and run SANDBOX:
+- **Batch files** — both tracked ones `cd` to the DevSandbox clone and run SANDBOX:
   - `batch/rs_forms_scheduled_dev_sb.bat` — single run, `config\tests-config.json --live`, started by the on-demand task above
   - `batch/rs_forms_monitor_sandbox.bat` — legacy watch mode, `config\rs_forms_config.json --watch --live`
 - **Rollback**: Disable the scheduled task and run `batch/rs_forms_monitor_sandbox.bat` for legacy watch mode
-- See [docs/TASK_SCHEDULER_SETUP.md](docs/TASK_SCHEDULER_SETUP.md) for full setup instructions
+- Host setup, folder layout, post-deploy checks and rollback for the production workstation are kept in the owner's private documentation
 
 ## Repo quirks
 

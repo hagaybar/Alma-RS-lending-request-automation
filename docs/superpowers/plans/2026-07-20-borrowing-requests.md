@@ -40,7 +40,7 @@
   check — judged low-probability.
 - `agree_to_copyright_terms` and `lcc_number` content are **OPEN questions** (guidebook §4.6, §4.5). Both must be config-driven with a documented default, never hardcoded, so the answers land in config without a code change. (2026-07-22: the upstream builder defaults the copyright flag to `True` — a third voice in the T-04 contradiction. Our code always passes the config value explicitly, so the builder default never applies.)
 - **PII:** `lcc_number` carries a patron's name. It must be masked on console output using the existing `PiiConsoleFilter` / `_log_pii` mechanism, exactly as `user_id` already is.
-- The lending path is **live production code** running on `masedet` via Task Scheduler. `tests/test_l2_citation_golden.py` must stay green at every commit.
+- The lending path is **live production code** running on the production workstation via Task Scheduler. `tests/test_l2_citation_golden.py` must stay green at every commit.
 - Branch discipline: work on `feature/borrowing-requests`, merge to `main` only. **Never commit to `prod`.** A merge to `prod` reaches production unattended on the next scheduled deploy run.
 
 ## File Structure
@@ -74,7 +74,7 @@ the operator is preparing that release and will announce it).
 
 > **⛔ BLOCKED until that release is on PyPI.** Tasks 1–4 do not touch the
 > new surface and can run first; Tasks 5+ depend on this task. Do not pin a
-> git ref as a workaround — masedet installs from PyPI (see
+> git ref as a workaround — production installs from PyPI (see
 > `docs/almaapitk-audit.md` for the bump gate used for 0.4.5→0.4.6).
 
 **Files:**
@@ -1316,7 +1316,7 @@ from rs_requests.base import BuiltRequest, RequestBuilder
 # import-light canonical exception home) and only re-imported here: the
 # processor's typed except clause needs the class WITHOUT chaining lending
 # startup to this module's almaapitk >=0.5.0-only imports (2026-07-22
-# review finding — the pull-done/install-pending deploy window on masedet).
+# review finding — the pull-done/install-pending deploy window on the production workstation).
 from rs_requests.errors import BorrowingValidationError
 
 

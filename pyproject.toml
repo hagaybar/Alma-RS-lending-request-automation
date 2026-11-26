@@ -40,7 +40,7 @@ testpaths = ["tests"]
 # The opt-in live SANDBOX smoke is tests/test_live_smoke.py (RUN_LIVE_SMOKE=1).
 #
 # --basetemp: redirect pytest's tmp_path base into a repo-local, user-owned
-# dir. The prod box (masedet) has a locked-down %TEMP%\pytest-of-<user> base
+# dir. The production workstation has a locked-down %TEMP%\pytest-of-<user> base
 # (owned by another account -> WinError 5 Access denied) that kills every
 # tmp_path test before it starts. A repo-local basetemp sidesteps it. The dir
 # is wiped at the start of each run, so keep it dedicated (it is gitignored).

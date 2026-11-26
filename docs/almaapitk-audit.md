@@ -142,7 +142,7 @@ Test layering for this repo (mirrors the analytics model; adapted because **this
 2. Bump the pin in `pyproject.toml`: `>=0.4.7` if 0.4.7 is published; otherwise `>=0.4.6`.
 3. `poetry update almaapitk` then `poetry run pytest` (offline). Run the L3 SANDBOX smoke manually with `RUN_LIVE_SMOKE=1`.
 4. While running L3, confirm stdout shows no unmasked `user_id` from the toolkit logger (§E verification).
-5. Re-verify on the masedet prod workstation per its own `poetry install` before merging `main` → `prod`.
+5. Re-verify on the production workstation per its own `poetry install` before merging `main` → `prod`.
 
 ---
 

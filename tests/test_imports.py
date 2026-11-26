@@ -33,8 +33,8 @@ class TestImports(unittest.TestCase):
 
         for py_file in python_files:
             # Pin UTF-8: the processor source carries non-ASCII glyphs (✓/✗).
-            # Without this, a non-UTF-8 default locale (e.g. masedet's Hebrew
-            # cp1255 Windows box) raises UnicodeDecodeError reading the file.
+            # Without this, a non-UTF-8 default locale (e.g. a Hebrew cp1255
+            # Windows workstation) raises UnicodeDecodeError reading the file.
             content = py_file.read_text(encoding="utf-8")
             for pattern in forbidden_patterns:
                 matches = re.findall(pattern, content)

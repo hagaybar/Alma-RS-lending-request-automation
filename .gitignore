@@ -28,7 +28,7 @@ config/*.json
 
 # Local-only prod batch launcher (counterpart to the tracked sandbox launcher).
 # Tracked sibling: batch/rs_forms_monitor_sandbox.bat
-# TODO: commit this from Masedet for parity (separate hygiene task).
+# TODO: commit this from the production workstation for parity (separate hygiene task).
 batch/rs_forms_monitor_prod.bat
 
 # Runtime logs directory at repo root (in addition to output/logs/ already covered)
