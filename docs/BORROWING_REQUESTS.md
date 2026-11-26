@@ -36,7 +36,7 @@ systems:
 3. **Fork:**
    - **Held** → a file lands in the lending input folder → lending request.
    - **Not held** → a file lands in the **borrowing** input folder → borrowing request.
-4. A Windows Task Scheduler job on `masedet` picks the file up.
+4. A Windows scheduled task on the production workstation picks the file up.
 5. Metadata is enriched from PubMed (PMID) or Crossref (DOI).
 6. A request is created in Alma; the file is moved to `processed/`.
 
@@ -355,7 +355,7 @@ these cases can be monitored:
 - A `timeout` followed by a `duplicate-402362` for the same `file=` is the
   usual pair. `file=` is the same file ID the reports show.
 - Monitor with `findstr /C:"[BORROWING-UNCONFIRMED]"` on the processor log
-  (masedet) or `grep -F` elsewhere.
+  (Windows) or `grep -F` elsewhere.
 
 Facts verified while building the marker, still true and still the reason
 `request_id` stays unknowable on a `402362`:

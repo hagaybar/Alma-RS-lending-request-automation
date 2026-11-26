@@ -18,7 +18,7 @@ It's critical to distinguish between these two milestones:
 | Milestone | Definition | Criteria |
 |-----------|------------|----------|
 | **Extraction Complete** | The code is cleanly separated and can run in isolation | ✅ Repo created and pushed<br>✅ Imports fixed (no `from src.*`)<br>✅ Dependencies install (`poetry install`)<br>✅ Tests pass locally<br>✅ Documentation updated |
-| **Production Ready** | The project is validated and safe for controlled promotion | ✅ All "Extraction Complete" criteria<br>✅ DevSandbox validation on Masedet<br>✅ Config files use safe placeholder values<br>✅ Logs verified for correct output paths<br>✅ Ready for controlled promotion to production lane |
+| **Production Ready** | The project is validated and safe for controlled promotion | ✅ All "Extraction Complete" criteria<br>✅ DevSandbox validation on the production workstation<br>✅ Config files use safe placeholder values<br>✅ Logs verified for correct output paths<br>✅ Ready for controlled promotion to production lane |
 
 **Do not skip from "Extraction Complete" directly to updating production scheduled tasks.** Always validate in DevSandbox first.
 
@@ -47,7 +47,7 @@ AlmaAPITK/src/projects/MyProject/    →    MyProject-standalone/
 - Git configured with GitHub access
 - AlmaAPITK repo cloned at `/home/hagaybar/projects/AlmaAPITK`
 
-### On Target Machine (Masedet)
+### On Target Machine (production workstation)
 
 - Python 3.12+
 - Poetry installed
@@ -254,7 +254,7 @@ touch $TARGET/processed/.gitkeep
 > ⚠️ **Config Template Rule: No Real Paths**
 >
 > Example config files committed to the repo must NEVER contain:
-> - Real Windows paths (e.g., `D:\Scripts\Prod\...`)
+> - Real Windows paths (e.g., `D:\<root>\Prod\...`)
 > - Real usernames or machine names
 > - Real API keys or credentials
 > - Any machine-specific directories
@@ -272,8 +272,8 @@ touch $TARGET/processed/.gitkeep
 > **Incorrect (DO NOT commit):**
 > ```json
 > {
->     "input_path": "D:\\Scripts\\Prod\\ExpiredUsers\\input",
->     "output_path": "D:\\Scripts\\Prod\\ExpiredUsers\\output",
+>     "input_path": "D:\\<root>\\Prod\\MyProject\\input",
+>     "output_path": "D:\\<root>\\Prod\\MyProject\\output",
 >     "environment": "PRODUCTION"
 > }
 > ```
@@ -411,14 +411,14 @@ If your project has Windows batch files, update them:
 
 **Before:**
 ```batch
-cd /d D:\Scripts\Prod\AlmaAPITK
-set PYTHONPATH=D:\Scripts\Prod\AlmaAPITK
+cd /d <prod-root>\AlmaAPITK
+set PYTHONPATH=<prod-root>\AlmaAPITK
 poetry run python src\projects\MyProject\my_script.py --config ...
 ```
 
 **After:**
 ```batch
-cd /d D:\Scripts\DevSandbox\MyProject-standalone
+cd /d <devsandbox-root>\MyProject-standalone
 poetry run python my_script.py --config config\my_config.json --live
 ```
 
@@ -463,13 +463,13 @@ git push -u origin main
 
 ---
 
-## Testing on Masedet (Production Machine)
+## Testing on the Production Workstation
 
 ### Safe Testing Sequence
 
 1. **Clone to DevSandbox (not Prod)**
    ```powershell
-   cd D:\Scripts\DevSandbox
+   cd <devsandbox-root>
    git clone https://github.com/hagaybar/MyProject-standalone.git
    cd MyProject-standalone
    poetry install
@@ -505,8 +505,8 @@ git push -u origin main
 
 The original production flow must remain unchanged until the new standalone version is proven:
 
-1. **Keep original running** — Do not touch the existing `D:\Scripts\Prod\AlmaAPITK` flow
-2. **Validate in DevSandbox** — All testing happens in `D:\Scripts\DevSandbox\MyProject-standalone`
+1. **Keep original running** — Do not touch the existing `<prod-root>\AlmaAPITK` flow
+2. **Validate in DevSandbox** — All testing happens in `<devsandbox-root>\MyProject-standalone`
 3. **Document validation results** — Record what was tested and the outcomes
 4. **Promote only after validation** — Move to production lane only when DevSandbox works correctly
 
@@ -516,7 +516,7 @@ The original production flow must remain unchanged until the new standalone vers
 |------|--------|-------|
 | 1 | Complete ALL DevSandbox testing | Smoke tests, dry-run, live SANDBOX |
 | 2 | Create production config | Copy example, fill in production paths |
-| 3 | Clone to production location | `D:\Scripts\Prod\MyProject-standalone` |
+| 3 | Clone to production location | `<prod-root>\MyProject-standalone` |
 | 4 | Run `poetry install` in production location | Verify dependencies |
 | 5 | Test dry-run in production location | No API calls, just verify paths |
 | 6 | Run live against PRODUCTION (once) | Manual execution, monitor results |
@@ -528,7 +528,7 @@ The original production flow must remain unchanged until the new standalone vers
 Before updating scheduled tasks, ensure you have a fast rollback:
 
 ```
-D:\Scripts\Prod\
+<prod-root>\
 ├── AlmaAPITK\                      # ← Original (KEEP until new version proven)
 │   └── src\projects\MyProject\
 └── MyProject-standalone\           # ← New standalone version
@@ -548,7 +548,7 @@ After successful promotion, record:
 | **Repo** | `https://github.com/hagaybar/MyProject-standalone` |
 | **Commit** | `abc123...` |
 | **almaapitk Version** | `v0.2.2` |
-| **Production Path** | `D:\Scripts\Prod\MyProject-standalone` |
+| **Production Path** | `<prod-root>\MyProject-standalone` |
 | **Config File** | `config\my_config_prod.json` |
 | **Scheduled Task** | `TaskName` |
 | **Validation Date** | `YYYY-MM-DD` |
@@ -585,7 +585,7 @@ After successful promotion, record:
 
 ### Deployment (DevSandbox = Extraction Complete)
 - [ ] Pushed to GitHub
-- [ ] Cloned on Masedet DevSandbox
+- [ ] Cloned to the DevSandbox root on the production workstation
 - [ ] Tested with SANDBOX environment
 - [ ] Tested with dry-run mode
 - [ ] Tested with live mode against SANDBOX
@@ -631,7 +631,7 @@ After successful promotion, record:
 - Verify tag exists: `git ls-remote --tags https://github.com/hagaybar/AlmaAPITK.git`
 - Check network connectivity
 
-### Tests pass locally but fail on Masedet
+### Tests pass locally but fail on the production workstation
 
 **Cause:** Different Python version or missing env vars.
 **Solution:**

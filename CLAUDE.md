@@ -21,7 +21,7 @@ poetry run python resource_sharing_forms_processor.py --config config/rs_forms_c
 
 ## Where it runs
 
-Production: Task Scheduler on masedet, every 5 minutes, from the `prod` branch (local-only batch file); see [docs/masedet-prod-runbook.md](docs/masedet-prod-runbook.md). Keys: `ALMA_SB_API_KEY` (sandbox), `ALMA_PROD_API_KEY` (production).
+Production: a Windows scheduled task on the production host, every 5 minutes, from the `prod` branch (local-only batch file). Deployment and operations notes for the production host are kept in the owner's private documentation; the user-level instructions say where. Keys: `ALMA_SB_API_KEY` (sandbox), `ALMA_PROD_API_KEY` (production).
 
 ## Where to look
 

@@ -17,11 +17,11 @@
 ## The sequence
 
 1. **Verify the DevSandbox auto-deploy** (automatic, next scheduled run on
-   masedet): `main` pulled, `poetry install` brings almaapitk 0.5.0. Check
+   the production workstation): `main` pulled, `poetry install` brings almaapitk 0.5.0. Check
    the lending heartbeat log afterwards — lending must be unaffected
    (borrowing is not imported at startup and has no folder configured).
 
-2. **Activate on the masedet sandbox config** (`DevSandbox`, gitignored
+2. **Activate on the workstation's sandbox config** (`DevSandbox`, gitignored
    `*_sandbox` config): add `borrowing_input_folder` and the `borrowing`
    block from `config/rs_forms_config.example.json`. The example already
    ships the correct values: 4-column mapping
@@ -49,7 +49,7 @@
    are caught by manual monitoring instead (guidebook §8.3).
 
 6. **Ship to prod**: merge `main` → `prod` (explicit approval only, per repo
-   rules — auto-deploys to `D:\Scripts\Prod\` on the next scheduled run),
+   rules — auto-deploys to the Prod clone on the next scheduled run),
    then add `borrowing_input_folder` + `borrowing` block to the prod config.
    Coordinate with the Power Automate flow owner: the not-held fork writes
    its 4-column TSV to the prod borrowing folder location.

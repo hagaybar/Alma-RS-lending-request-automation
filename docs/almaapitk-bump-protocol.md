@@ -3,8 +3,8 @@
 Every change to this repo's `almaapitk` pin follows this document, step by step. It is binding:
 a bump that skips a step is not done. `CLAUDE.md` points here.
 
-**Why it exists.** This repo is a production consumer of `almaapitk`. It runs on masedet, and
-`main` and `prod` auto-deploy on a schedule with no second checkpoint. A bad bump on a
+**Why it exists.** This repo is a production consumer of `almaapitk`. It runs on a production workstation,
+and `main` and `prod` auto-deploy on a schedule with no second checkpoint. A bad bump on a
 scheduled repo can fail silently in production. A bump is therefore a small, audited change
 made inside this repo, never a one-line pin edit pushed from somewhere else.
 
@@ -77,9 +77,9 @@ owner runs it before merging.
 - Tick the issue's boxes that are actually done.
 - The owner merges.
 
-### 8. DevSandbox (masedet)
+### 8. DevSandbox (production workstation)
 
-After the next auto-deploy of `main`, run the repo's DevSandbox check on masedet (see "This
+After the next auto-deploy of `main`, run the repo's DevSandbox check on the production workstation (see "This
 repo"). If L3 in step 6 already ran there, on the deployed `main`, it counts. Note the result in
 the issue.
 
@@ -96,7 +96,7 @@ test (AlmaAPITK rule R10).
 
 ## This repo: Alma-RS-lending-request-automation
 
-This is a **scheduled, unattended, writing** production job. Every 5 minutes on masedet it
+This is a **scheduled, unattended, writing** production job. Every 5 minutes on the production workstation it
 creates lending requests and user (borrowing) requests in Alma. Treat every bump as
 high-risk.
 
@@ -124,9 +124,9 @@ high-risk.
   to end, with `config/tests-config.json --live`. This is what
   `batch/rs_forms_scheduled_dev_sb.bat` runs. Never run `--live` against PRODUCTION during a
   bump.
-- **DevSandbox check (masedet):** the SANDBOX task, `RS SB Lending-Borrowing (on demand)`, has
-  no schedule since 2026-11-25, so there is no "clean day" to wait for. Instead, on masedet:
-  1. In `D:\Scripts\DevSandbox\Alma-RS-lending-request-automation`: confirm
+- **DevSandbox check (production workstation):** the SANDBOX task, `RS SB Lending-Borrowing (on demand)`, has
+  no schedule since 2026-11-25, so there is no "clean day" to wait for. Instead, on the workstation:
+  1. In the DevSandbox clone: confirm
      `config\tests-config.json` says `"environment": "SANDBOX"` and note its `input_folder`,
      `borrowing_input_folder` and `output_dir`; `git log -1` shows the merged `main`;
      `poetry run python -c "import almaapitk; print(almaapitk.__version__)"` shows the new version.
@@ -137,4 +137,4 @@ high-risk.
   4. Both files are in `processed`, today's `<output_dir>\reports\processed_<date>.csv` has two
      `success` rows with request IDs, and both requests read back from the Alma sandbox.
   The 0.7.0 run (issue #55, 2026-11-25) is the worked example.
-- **More:** `docs/masedet-prod-runbook.md` (prod operations), `docs/TASK_SCHEDULER_SETUP.md`.
+- **More:** prod operations (folders, post-deploy checks, rollback) are in the owner's private documentation.
