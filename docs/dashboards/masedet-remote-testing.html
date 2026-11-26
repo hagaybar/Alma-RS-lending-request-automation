@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>masedet remote test runner: plan</title>
+<style>
+  :root { --bg:#0f1116; --ink:#e6e9ef; --muted:#9aa4b2; --line:#2b313c; --panel:#181b22; --panel-2:#1f242d;
+          --ok:#3fb950; --warn:#d29922; --bad:#f85149; --acc:#58a6ff; }
+  * { box-sizing:border-box; }
+  body { background:var(--bg); color:var(--ink); padding:28px; max-width:1120px; margin:auto;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; line-height:1.55; }
+  h1 { margin:0 0 4px; font-size:1.6rem; } h2 { margin:34px 0 10px; font-size:1.15rem; }
+  .sub { color:var(--muted); margin-bottom:20px; }
+  .answer { background:var(--panel); border-left:4px solid var(--acc); padding:14px 18px; border-radius:6px; }
+  .flow { display:grid; grid-template-columns:repeat(5,1fr); gap:10px; }
+  .step { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px; position:relative; }
+  .step .n { color:var(--acc); font-size:.75rem; text-transform:uppercase; letter-spacing:.05em; }
+  .step h3 { margin:2px 0 6px; font-size:.98rem; } .step p { margin:0; font-size:.88rem; color:var(--muted); }
+  .where { display:inline-block; font-size:.72rem; padding:1px 8px; border-radius:10px; border:1px solid var(--line); color:var(--muted); margin-top:8px; }
+  @media (max-width:900px){ .flow { grid-template-columns:1fr; } }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(330px,1fr)); gap:14px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:16px; }
+  .card h3 { margin:0 0 6px; font-size:1rem; } .card p { margin:8px 0; } .card ul { margin:6px 0 0 18px; padding:0; }
+  .tag { display:inline-block; font-size:.75rem; padding:1px 8px; border-radius:10px; margin-right:6px; border:1px solid; }
+  .ok { color:var(--ok); border-color:var(--ok);} .warn { color:var(--warn); border-color:var(--warn);} .bad { color:var(--bad); border-color:var(--bad);}
+  table { border-collapse:collapse; width:100%; font-size:.92rem; }
+  th, td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; background:var(--panel); }
+  code { background:var(--panel-2); padding:1px 5px; border-radius:4px; font-size:.88em; }
+  pre { background:var(--panel-2); padding:12px; border-radius:6px; overflow-x:auto; font-size:.84rem; margin:8px 0; }
+  li { margin-bottom:5px; } .muted { color:var(--muted); }
+</style>
+</head>
+<body>
+<h1>masedet remote test runner: plan</h1>
+<div class="sub">Run real tests on masedet's DevSandbox clones from a repo agent, with no login · draft 2026-11-25 · nothing built yet</div>
+
+<div class="answer">
+  <strong>Not too ambitious.</strong> It is a small project: two PowerShell scripts and one config file in the ops repo
+  (<code>masedet-ws-ops</code>), one scheduled task on masedet, and one small command on the agent side.
+  masedet keeps reaching <em>out</em> only (GitHub pull, SharePoint sync), so no firewall or access rule changes.
+  The one design rule that makes it safe: <strong>a request names a job from a fixed list; it never carries a command.</strong>
+</div>
+<p><strong>Full implementation plan</strong> (for the agent that builds it): <a href="masedet-remote-testing-plan.md" style="color:var(--acc)">masedet-remote-testing-plan.md</a></p>
+
+<h2>How one test run travels</h2>
+<div class="flow">
+  <div class="step"><div class="n">1 · input</div><h3>Request</h3>
+    <p>The agent pushes a small request file: which repo, which job.</p><span class="where">agent sandbox → GitHub</span></div>
+  <div class="step"><div class="n">2 · listener</div><h3>Poll</h3>
+    <p>A scheduled task pulls the requests every few minutes and picks up new ones.</p><span class="where">masedet · Task Scheduler</span></div>
+  <div class="step"><div class="n">3 · executor</div><h3>Run</h3>
+    <p>Looks the job up in the allowlist and runs it in that repo's DevSandbox clone, with a timeout.</p><span class="where">masedet · PowerShell</span></div>
+  <div class="step"><div class="n">4 · output</div><h3>Result</h3>
+    <p>Full log to the shared folder; a short summary back to GitHub.</p><span class="where">SharePoint + GitHub</span></div>
+  <div class="step"><div class="n">5 · listener</div><h3>Wait</h3>
+    <p>The agent waits for the summary, reads it and reports.</p><span class="where">agent sandbox</span></div>
+</div>
+<p class="muted">Expected round trip: 5–10 minutes (one poll interval plus the job's own run time).</p>
+
+<h2>The five parts</h2>
+<table>
+  <thead><tr><th>Part</th><th>What it is</th><th>Where it lives</th></tr></thead>
+  <tbody>
+    <tr><td>Request</td>
+      <td>One JSON file per request: id, repo, job, who asked, when. Nothing executable in it.</td>
+      <td>A small private GitHub repo used only for this (working name <code>masedet-jobs</code>), folder <code>requests/</code></td></tr>
+    <tr><td>Job catalogue</td>
+      <td>The allowlist: for each repo, the named jobs and the exact command each one runs. Changes only through a PR you merge.</td>
+      <td><code>masedet-ws-ops</code> → <code>config/remote_jobs.json</code></td></tr>
+    <tr><td>Listener + executor</td>
+      <td>One script, run every 5 minutes by a new scheduled task. Pulls requests, skips ones already done or too old, runs one job at a time, writes the result.</td>
+      <td><code>masedet-ws-ops</code> → <code>scripts_admin/remote_jobs.ps1</code></td></tr>
+    <tr><td>Output</td>
+      <td><strong>Full log</strong> stays inside TAU, in the SharePoint folder the status collector already writes to (<code>_ops_shared</code>, new subfolder <code>jobs</code>).
+          <strong>Summary</strong> (job, exit code, pass/fail counts, duration) is pushed to <code>masedet-jobs</code> → <code>results/</code>.</td>
+      <td>SharePoint + GitHub</td></tr>
+    <tr><td>Agent command</td>
+      <td><code>tau-masedet run &lt;repo&gt; &lt;job&gt;</code> writes and pushes the request and prints its id.
+          <code>tau-masedet wait &lt;id&gt;</code> polls GitHub for the summary. Same shape as the existing <code>tau-relay</code>.</td>
+      <td>The sandbox kit (next to <code>tau-relay</code>, <code>tau-deploy</code>)</td></tr>
+  </tbody>
+</table>
+
+<div class="grid" style="margin-top:14px">
+  <div class="card"><h3>A request</h3>
+<pre>{
+  "id": "20261125-1412-rs-pytest",
+  "repo": "Alma-RS-lending-request-automation",
+  "job": "pytest",
+  "requested_by": "sandbox-agent",
+  "requested_at": "2026-11-25T14:12:00+02:00"
+}</pre></div>
+  <div class="card"><h3>A catalogue entry</h3>
+<pre>"Alma-RS-lending-request-automation": {
+  "dir": "D:\\Scripts\\DevSandbox\\Alma-RS-...",
+  "jobs": {
+    "pytest":  { "cmd": ".venv\\Scripts\\python -m pytest -q",
+                 "timeout_min": 10, "publish_tail": true },
+    "smoke":   { "cmd": ".venv\\Scripts\\python scripts\\smoke_project.py",
+                 "timeout_min": 5,  "publish_tail": true },
+    "devsandbox-day": { "cmd": "(collect today's run log + CSV counts)",
+                 "timeout_min": 5,  "publish_tail": false }
+  }
+}</pre></div>
+</div>
+
+<h2>Safety rules built in</h2>
+<div class="grid">
+  <div class="card"><h3>What a request can do</h3><ul>
+    <li>Pick a repo and a job name. Nothing else. Unknown names are refused and logged.</li>
+    <li>The commands live in the ops repo's catalogue, which changes only by a PR you merge.</li>
+    <li>DevSandbox only: the executor refuses any folder outside <code>D:\Scripts\DevSandbox\</code>.</li>
+    <li>The job's environment has no production Alma key.</li>
+  </ul></div>
+  <div class="card"><h3>What can't go wrong quietly</h3><ul>
+    <li>Each request runs once. An id that already has a result is skipped.</li>
+    <li>Requests older than 2 hours are ignored, so a stuck backlog can't fire weeks later (the lesson from GH #48, the failed-folder change).</li>
+    <li>One job at a time, with a lock file and a hard timeout that kills the whole process tree.</li>
+    <li>Kill switch: disable the task, or drop a <code>remote_jobs.disabled</code> file.</li>
+    <li>Every request, accepted or refused, is written to a log on masedet.</li>
+  </ul></div>
+  <div class="card"><h3>What leaves TAU</h3><ul>
+    <li>The Alma sandbox is a copy of production, so logs can name real patrons. Full logs therefore stay in SharePoint.</li>
+    <li>GitHub gets only the summary. A job may add the last lines of its output (<code>publish_tail</code>) when that output is known to be clean, such as pytest.</li>
+  </ul></div>
+  <div class="card"><h3>IT</h3>
+    <span class="tag warn">your call</span>
+    <p>No rule is changed, but this is a way to start jobs on a managed machine from outside it. Worth one sentence to IT before the task is registered:
+       "a scheduled task that runs a fixed list of test commands, triggered by a file in our GitHub repo".</p></div>
+</div>
+
+<h2>Build order</h2>
+<table>
+  <thead><tr><th>Phase</th><th>What gets built</th><th>Who</th><th>Done when</th></tr></thead>
+  <tbody>
+    <tr><td>0 · decisions</td><td>The four questions below.</td><td>You</td><td>Answered</td></tr>
+    <tr><td>1 · thin slice</td>
+      <td><code>remote_jobs.ps1</code> + catalogue with one job (<code>pytest</code> for this repo). Request file pushed by hand. Result written to the SharePoint folder only.</td>
+      <td>Agent writes it as a PR in <code>masedet-ws-ops</code>; you merge, then register the task in one RDP session</td>
+      <td>A pushed request produces a result file in <code>_ops_shared\jobs</code> within 10 minutes</td></tr>
+    <tr><td>2 · return path</td>
+      <td>Summary pushed back to <code>masedet-jobs</code>. <code>tau-masedet run</code> / <code>wait</code> on the agent side.</td>
+      <td>Agent (script, kit); you (give masedet's key write access to that one repo)</td>
+      <td>An agent runs a job and reads the result with no help from you</td></tr>
+    <tr><td>3 · useful jobs</td>
+      <td><code>smoke</code>, <code>devsandbox-day</code> (was every 5-minute run logged, any error rows today), and a Sandbox end-to-end job that feeds test files to the processor.</td>
+      <td>Agent, one PR per job</td>
+      <td>The almaapitk bump protocol's steps 6 and 8 can be done from here</td></tr>
+    <tr><td>4 · other repos</td>
+      <td>Catalogue entries for the other DevSandbox clones. A line in each repo's docs saying which jobs exist.</td>
+      <td>Agent, per repo</td><td>As needed</td></tr>
+  </tbody>
+</table>
+<p class="muted">Phase 1 alone is already useful: you would trigger by pushing a file and read the log in SharePoint. Phases 2–3 are what remove you from the loop.</p>
+
+<h2>Decisions for you (phase 0)</h2>
+<ol>
+  <li><strong>Where requests live.</strong> A new private repo <code>masedet-jobs</code> (recommended: keeps request noise out of the ops repo's history, and agents never need to push to the ops repo's main branch) or a <code>jobs</code> branch in <code>masedet-ws-ops</code>.</li>
+  <li><strong>How results come back to the agent.</strong> Summary pushed to GitHub (recommended; needs masedet's SSH key to have write access to that one repo), or SharePoint only, with a small copier in WSL that drops results into the agent's folder the way screenshots already arrive.</li>
+  <li><strong>IT.</strong> Tell them first, or treat it as one more scheduled task like the auto-deploy?</li>
+  <li><strong>Jobs that write to the Alma sandbox.</strong> Allowed in the catalogue (needed for the end-to-end check), or read-only jobs only at first?</li>
+</ol>
+
+<h2>What I don't know yet</h2>
+<ul>
+  <li>Whether masedet's current GitHub SSH key can push, or only pull.</li>
+  <li>Whether the auto-deploy also updates the <code>masedet-ws-ops</code> clone on masedet, or you pull that one by hand. The executor must always run the merged catalogue.</li>
+  <li>Whether <code>_ops_shared</code> syncs to your PC as well as to SharePoint.</li>
+</ul>
+
+<h2>For the 0.7.0 bump, none of this is needed</h2>
+<p>The missing Sandbox check can be done today by dropping one lending and one borrowing test file into the synced DevSandbox input folders and looking at the Alma sandbox, provided those folders are the sandbox ones and not production's.</p>
+</body>
+</html>
