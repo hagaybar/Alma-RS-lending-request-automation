@@ -12,7 +12,7 @@ echo Press Ctrl+C to stop monitoring
 echo.
 
 REM Change to the standalone repository directory
-cd /d D:\Scripts\DevSandbox\Alma-RS-lending-request-automation
+cd /d "%~dp0.."
 
 REM Verify we're in the right place
 echo Working directory: %CD%
